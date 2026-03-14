@@ -42,7 +42,7 @@ const ui = `
         body { background: #1e1f22; color: #dbdee1; font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
         #sidebar { width: 240px; background: #2b2d31; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
         #content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #313338; }
-        .room-btn { padding: 12px; background: #35373c; border-radius: 5px; cursor: pointer; transition: 0.2s; border: none; color: #b5bac1; text-align: left; font-size: 16px; }
+        .room-btn { padding: 12px; background: #35373c; border-radius: 5px; cursor: pointer; transition: 0.2s; border: none; color: #b5bac1; text-align: left; font-size: 16px; width: 100%; }
         .room-btn:hover { background: #404249; color: white; }
         .room-btn.active { background: #505259; color: white; font-weight: bold; }
         #status { font-size: 24px; color: #80848e; }
@@ -65,7 +65,17 @@ const ui = `
         const socket = io();
         let localStream;
         let peers = {};
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        
+        // Добавлено больше STUN серверов для пробива мобильного интернета
+        const config = { 
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' }
+            ] 
+        };
 
         async function initMedia() {
             if (!localStream) {
@@ -83,7 +93,9 @@ const ui = `
                 peers = {};
                 document.getElementById('remote-audios').innerHTML = '';
                 socket.emit('join', name);
-            } catch(e) { alert("Нужен доступ к микрофону!"); }
+            } catch(e) { 
+                alert("Микрофон заблокирован! Проверьте настройки HTTPS."); 
+            }
         }
 
         socket.on('room_users', users => { users.forEach(userId => callUser(userId)); });
@@ -103,8 +115,13 @@ const ui = `
             socket.emit('answer', { to: d.from, answer: ans });
         });
 
-        socket.on('answer', d => { peers[d.from].setRemoteDescription(new RTCSessionDescription(d.answer)); });
-        socket.on('ice', d => { peers[d.from].addIceCandidate(new RTCIceCandidate(d.cand)); });
+        socket.on('answer', d => { 
+            if(peers[d.from]) peers[d.from].setRemoteDescription(new RTCSessionDescription(d.answer)); 
+        });
+
+        socket.on('ice', d => { 
+            if(peers[d.from]) peers[d.from].addIceCandidate(new RTCIceCandidate(d.cand)); 
+        });
 
         socket.on('user_left', id => {
             if (peers[id]) {
@@ -137,8 +154,5 @@ const ui = `
 </html>
 `;
 
-// ЭТО ВАЖНО ДЛЯ RAILWAY
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { 
-    console.log('Server started on port ' + PORT); 
-});
+http.listen(PORT, '0.0.0.0', () => { console.log('Server online'); });

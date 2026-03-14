@@ -71,7 +71,7 @@ const htmlContent = `
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
         #sidebar { width: 350px; background: var(--side); display: flex; flex-direction: column; border-right: 1px solid #222; z-index: 10; flex-shrink: 0; }
-        #chat { flex: 1; display: flex; flex-direction: column; background: #000; position: relative; height: 100%; }
+        #chat { flex: 1; display: flex; flex-direction: column; background: #000; position: relative; height: 100vh; }
         @media (max-width: 900px) {
             #sidebar { width: 100%; position: absolute; height: 100%; transition: 0.3s; }
             #chat { width: 100%; position: absolute; height: 100%; transform: translateX(100%); transition: 0.3s; }
@@ -94,11 +94,12 @@ const htmlContent = `
         .m.out { align-self: flex-end; background: var(--msg-out); }
         .del-btn { position: absolute; top: -5px; right: -5px; background: #ff3b30; border-radius: 50%; width: 18px; height: 18px; font-size: 12px; display: none; align-items: center; justify-content: center; cursor: pointer; }
         .m.out:hover .del-btn { display: flex; }
-        #input-area { padding: 15px; background: var(--side); display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+        #controls { background: var(--side); padding: 5px 15px; display: flex; align-items: center; gap: 10px; border-top: 1px solid #222; }
+        #input-area { padding: 15px; background: var(--side); display: flex; gap: 10px; align-items: center; flex-shrink: 0; transition: margin-bottom 0.2s; }
         #msg-in { flex: 1; background: #080a0f; border: 1px solid #333; color: #fff; padding: 12px; border-radius: 20px; }
         .act-btn { font-size: 24px; cursor: pointer; }
         #call-ui { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 2000; flex-direction: column; align-items: center; justify-content: center; }
-        .logout { padding: 10px; color: #ff3b30; cursor: pointer; font-size: 14px; text-align: center; border-top: 1px solid #222; }
+        .btn-exit { background: #ff3b30; color: white; border: none; padding: 5px 10px; border-radius: 8px; font-size: 11px; cursor: pointer; margin-left: auto; }
     </style>
 </head>
 <body>
@@ -112,9 +113,11 @@ const htmlContent = `
         </div>
     </div>
     <div id="sidebar">
-        <div class="header"><b>Чаты</b></div>
+        <div class="header">
+            <b>Чаты</b>
+            <button class="btn-exit" onclick="localStorage.clear(); location.reload();">ВЫЙТИ</button>
+        </div>
         <div id="u-list" style="flex:1; overflow-y:auto;"></div>
-        <div class="logout" onclick="localStorage.clear(); location.reload();">ВЫЙТИ ИЗ АККАУНТА</div>
     </div>
     <div id="chat">
         <div class="header">
@@ -124,6 +127,10 @@ const htmlContent = `
             <div id="call-trigger" class="act-btn" style="display:none" onclick="makeCall()">📞</div>
         </div>
         <div id="msgs"></div>
+        <div id="controls">
+            <span style="font-size: 10px; opacity: 0.6;">ПОДЪЕМ ВВОДА:</span>
+            <input type="range" id="lift-slider" min="0" max="300" value="0" style="flex:1" oninput="document.getElementById('input-area').style.marginBottom = this.value + 'px'">
+        </div>
         <div id="input-area">
             <label class="act-btn">📎<input type="file" id="f-in" style="display:none" onchange="upFile()"></label>
             <input type="text" id="msg-in" placeholder="Сообщение...">
@@ -179,15 +186,17 @@ const htmlContent = `
             r.readAsDataURL(f);
         }
         async function startRec() {
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-            recorder = new MediaRecorder(s); chunks = [];
-            recorder.ondataavailable = e => chunks.push(e.data);
-            recorder.onstop = () => {
-                const b = new Blob(chunks, { type: 'audio/ogg' });
-                const r = new FileReader();
-                r.onload = () => socket.emit('chat message', { to: target, file: { data: r.result }, isVoice: true });
-                r.readAsDataURL(b);
-            }; recorder.start();
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+                recorder = new MediaRecorder(s); chunks = [];
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = () => {
+                    const b = new Blob(chunks, { type: 'audio/ogg' });
+                    const r = new FileReader();
+                    r.onload = () => socket.emit('chat message', { to: target, file: { data: r.result }, isVoice: true });
+                    r.readAsDataURL(b);
+                }; recorder.start();
+            } catch(e) { alert("Микрофон недоступен"); }
         }
         function stopRec() { if(recorder) recorder.stop(); }
         socket.on('chat message', m => { if((!target && !m.to) || (target && (m.from===target || m.to===target))) addM(m); });
@@ -204,24 +213,40 @@ const htmlContent = `
             }
             c += \`<div>\${m.text}</div>\`; d.innerHTML = c; msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
         }
+
+        // --- ЛОГИКА ЗВОНКОВ ---
         async function makeCall() {
-            call_ui.style.display = 'flex';
+            if(!target) return;
+            console.log("Начинаем звонок юзеру:", target);
+            document.getElementById('call-ui').style.display = 'flex';
+            document.getElementById('c-status').innerText = "Звоним " + target;
+            
             peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-            s.getTracks().forEach(t => peer.addTrack(t, s));
-            const o = await peer.createOffer(); await peer.setLocalDescription(o);
-            socket.emit('call-user', { to: target, offer: o });
-            peer.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
+            try {
+                const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+                s.getTracks().forEach(t => peer.addTrack(t, s));
+                const o = await peer.createOffer();
+                await peer.setLocalDescription(o);
+                socket.emit('call-user', { to: target, offer: o });
+                peer.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
+            } catch(e) { 
+                alert("Ошибка звонка: проверьте доступ к микрофону"); 
+                document.getElementById('call-ui').style.display = 'none';
+            }
         }
+
         socket.on('incoming-call', d => {
-            call_ui.style.display = 'flex'; c_status.innerText = "Вызов от " + d.from; ans_btn.style.display = 'block';
-            ans_btn.onclick = async () => {
-                ans_btn.style.display = 'none';
+            document.getElementById('call-ui').style.display = 'flex';
+            document.getElementById('c-status').innerText = "Вызов от " + d.from;
+            document.getElementById('ans-btn').style.display = 'block';
+            document.getElementById('ans-btn').onclick = async () => {
+                document.getElementById('ans-btn').style.display = 'none';
                 peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
                 const s = await navigator.mediaDevices.getUserMedia({ audio: true });
                 s.getTracks().forEach(t => peer.addTrack(t, s));
                 await peer.setRemoteDescription(new RTCSessionDescription(d.offer));
-                const a = await peer.createAnswer(); await peer.setLocalDescription(a);
+                const a = await peer.createAnswer();
+                await peer.setLocalDescription(a);
                 socket.emit('answer-call', { to: d.from, answer: a });
                 peer.ontrack = e => { const au = new Audio(); au.srcObject = e.streams[0]; au.play(); };
             };

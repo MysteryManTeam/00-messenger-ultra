@@ -23,11 +23,9 @@ io.on('connection', (socket) => {
             db.users[d.user] = { pass: bcrypt.hashSync(d.pass, 10) };
             save(); socket.emit('sys', 'Готово');
         } else {
-            // Проверка: обычный пароль или сохраненный хэш для автовхода
             const isMatch = d.isAuto ? (d.pass === u?.pass) : (u && bcrypt.compareSync(d.pass, u.pass));
             if (u && isMatch) {
                 curr = d.user; socket.join(curr); online[curr] = socket.id;
-                // Отправляем обратно имя и хэш пароля для сохранения в localStorage
                 socket.emit('auth_ok', {user: curr, pass: u.pass});
                 io.emit('upd_u', { all: Object.keys(db.users), on: Object.keys(online) });
             } else socket.emit('err', 'Ошибка входа');
@@ -62,15 +60,15 @@ const ui = `
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>00 Messenger Classic Fixed</title>
+    <title>00 Messenger Fixed</title>
     <style>
         :root { --bg: #1c1c1c; --side: #252525; --acc: #60cdff; --brd: #333; }
         body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
         #sidebar { width: 300px; background: var(--side); border-right: 1px solid var(--brd); display: flex; flex-direction: column; }
         #chat-area { flex: 1; display: flex; flex-direction: column; }
-        .header { padding: 12px 20px; border-bottom: 1px solid var(--brd); background: rgba(30,30,30,0.8); display: flex; align-items: center; justify-content: space-between; }
+        .header { padding: 12px 20px; border-bottom: 1px solid var(--brd); background: rgba(30,30,30,0.8); display: flex; align-items: center; justify-content: space-between; min-height: 50px; }
         #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
-        .msg { padding: 10px 14px; border-radius: 8px; max-width: 70%; font-size: 14px; }
+        .msg { padding: 10px 14px; border-radius: 8px; max-width: 70%; font-size: 14px; position: relative; }
         .msg.me { align-self: flex-end; background: #005fb8; }
         .msg.them { align-self: flex-start; background: #333; }
         
@@ -80,12 +78,13 @@ const ui = `
             resize: none; outline: none; min-height: 40px; max-height: 200px; line-height: 20px; overflow: hidden;
         }
         
-        .u-card { padding: 12px 20px; cursor: pointer; border-bottom: 1px solid #2d2d2d; }
+        .u-card { padding: 12px 20px; cursor: pointer; border-bottom: 1px solid #2d2d2d; transition: background 0.2s; }
+        .u-card:hover { background: #2d2d2d; }
         .u-card.active { background: #3d3d3d; border-left: 4px solid var(--acc); }
         .btn-icon { cursor: pointer; font-size: 20px; }
         #call-box { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 9999; flex-direction: column; align-items: center; justify-content: center; }
         button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; background: var(--acc); }
-        .logout-btn { background: #ff4d4d; padding: 5px 10px; font-size: 12px; margin-left: 10px; }
+        .logout-btn { background: #ff4d4d; padding: 5px 10px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -128,7 +127,6 @@ const ui = `
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         const mi = document.getElementById('mi');
 
-        // ЛОГИКА АВТОВХОДА
         window.addEventListener('load', () => {
             const saved = localStorage.getItem('messenger_auth');
             if (saved) {
@@ -137,10 +135,7 @@ const ui = `
             }
         });
 
-        function logout() {
-            localStorage.removeItem('messenger_auth');
-            location.reload();
-        }
+        function logout() { localStorage.removeItem('messenger_auth'); location.reload(); }
 
         mi.addEventListener('input', function() {
             this.style.height = 'auto';
@@ -149,26 +144,22 @@ const ui = `
         });
 
         function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
-        
         socket.on('auth_ok', d => { 
-            me = d.user; 
-            auth.style.display = 'none'; 
-            // Сохраняем данные для автовхода (имя и хэшированный пароль из БД)
+            me = d.user; auth.style.display = 'none'; 
             localStorage.setItem('messenger_auth', JSON.stringify({ user: d.user, pass: d.pass }));
             selectChat(null); 
         });
-
-        socket.on('err', t => {
-            alert(t);
-            localStorage.removeItem('messenger_auth'); // Удаляем если данные устарели
-        });
+        socket.on('err', t => { alert(t); localStorage.removeItem('messenger_auth'); });
 
         function selectChat(u) {
             target = u;
             document.querySelectorAll('.u-card').forEach(c => c.classList.remove('active'));
-            if(window.event && window.event.currentTarget && window.event.currentTarget.classList) {
-                window.event.currentTarget.classList.add('active');
-            }
+            // Фикс поиска активного элемента в списке
+            const cards = document.querySelectorAll('.u-card');
+            cards.forEach(c => {
+                if((!u && c.innerText.includes('Общий чат')) || (u && c.innerText.includes(u))) c.classList.add('active');
+            });
+
             document.getElementById('chat-title').innerText = u || 'Общий чат';
             document.getElementById('call-btn').style.display = u ? 'block' : 'none';
             document.getElementById('messages').innerHTML = '';
@@ -189,20 +180,26 @@ const ui = `
         }
 
         socket.on('msg', m => {
-            const isGeneral = !m.to && !target;
-            const isMe = target && (m.from === target || (m.from === me && m.to === target));
-            if(isGeneral || isMe) renderMsg(m);
+            // Исправленная логика фильтрации:
+            // 1. Если сообщение общее (m.to === null) и мы в Общем чате (target === null)
+            // 2. ИЛИ Если это личка и отправитель/получатель совпадают с открытым чатом
+            const isGeneralUI = !m.to && !target;
+            const isPrivateUI = target && (m.from === target || (m.from === me && m.to === target));
+            
+            if(isGeneralUI || isPrivateUI) renderMsg(m);
         });
 
         socket.on('hist', h => h.forEach(renderMsg));
+        
         function renderMsg(m) {
             const msgs = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'msg ' + (m.from === me ? 'me' : 'them');
-            div.innerHTML = \`<small style="display:block;opacity:0.5">\${m.from}</small>\${m.text}\`;
+            div.innerHTML = \`<small style="display:block;opacity:0.5;font-size:10px">\${m.from}</small>\${m.text}\`;
             msgs.appendChild(div); msgs.scrollTop = msgs.scrollHeight;
         }
 
+        // Звонки
         async function startCall() {
             document.getElementById('call-box').style.display='flex';
             document.getElementById('call-btns').innerHTML = '<button onclick="location.reload()" style="background:red">Отмена</button>';
@@ -240,4 +237,4 @@ const ui = `
 `;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { console.log('Messenger Restarted'); });
+http.listen(PORT, '0.0.0.0', () => { console.log('Fixed Version Running'); });

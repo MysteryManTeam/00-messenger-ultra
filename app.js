@@ -38,7 +38,7 @@ io.on('connection', (socket) => {
         const h = db.messages.filter(m => {
             if (!t) return !m.to; 
             return (m.to === t && m.from === curr) || (m.to === curr && m.from === t);
-        }).slice(-50);
+        }).slice(-60);
         socket.emit('hist', h);
     });
 
@@ -73,29 +73,31 @@ const ui = `
         #sidebar { width: 300px; background: var(--win-side); border-right: 1px solid var(--brd); display: flex; flex-direction: column; }
         #chat-area { flex: 1; display: flex; flex-direction: column; position: relative; }
 
-        .header { padding: 15px 25px; border-bottom: 1px solid var(--brd); background: rgba(30,30,30,0.8); display: flex; align-items: center; justify-content: space-between; }
+        .header { padding: 12px 20px; border-bottom: 1px solid var(--brd); background: rgba(30,30,30,0.8); display: flex; align-items: center; justify-content: space-between; }
         
-        #messages { flex: 1; overflow-y: auto; padding: 25px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+        #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
         
-        .msg { padding: 12px 16px; border-radius: 8px; max-width: 65%; font-size: 14px; position: relative; animation: slideUp 0.2s ease; }
-        .msg.me { align-self: flex-end; background: #005fb8; border-bottom-right-radius: 2px; }
-        .msg.them { align-self: flex-start; background: #333; border-bottom-left-radius: 2px; }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .msg { padding: 10px 14px; border-radius: 8px; max-width: 70%; font-size: 14px; position: relative; }
+        .msg.me { align-self: flex-end; background: #005fb8; }
+        .msg.them { align-self: flex-start; background: #333; }
 
-        .input-panel { background: var(--win-side); border-top: 1px solid var(--brd); padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .controls { display: flex; align-items: center; gap: 15px; }
+        .input-panel { background: var(--win-side); border-top: 1px solid var(--brd); padding: 10px 20px; display: flex; flex-direction: column; }
         
-        textarea#mi { flex: 1; background: #2d2d2d; border: 1px solid #444; color: white; padding: 10px; border-radius: 6px; resize: none; outline: none; font-family: inherit; }
+        /* Ползунок стал выше и заметнее */
+        #height-slider { width: 100%; height: 20px; background: transparent; cursor: ns-resize; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; }
+        #height-slider::after { content: ""; width: 40px; height: 4px; background: #444; border-radius: 2px; }
+        #height-slider:hover::after { background: var(--win-acc); }
+
+        .controls { display: flex; align-items: center; gap: 15px; flex: 1; }
         
-        .u-card { padding: 15px 20px; cursor: pointer; transition: 0.2s; border-bottom: 1px solid #2d2d2d; display: flex; align-items: center; justify-content: space-between; }
+        textarea#mi { flex: 1; background: #2d2d2d; border: 1px solid #444; color: white; padding: 10px; border-radius: 6px; resize: none; outline: none; font-family: inherit; font-size: 14px; height: 100%; }
+        
+        .u-card { padding: 12px 20px; cursor: pointer; border-bottom: 1px solid #2d2d2d; display: flex; align-items: center; justify-content: space-between; }
         .u-card:hover { background: #333; }
         .u-card.active { background: #3d3d3d; border-left: 4px solid var(--win-acc); }
 
-        .btn-icon { cursor: pointer; font-size: 20px; transition: 0.2s; user-select: none; }
-        .btn-icon:hover { color: var(--win-acc); transform: scale(1.1); }
-        
-        #resizer { height: 6px; background: #333; cursor: ns-resize; border-radius: 3px; margin-bottom: 5px; }
-        #resizer:hover { background: var(--win-acc); }
+        .btn-icon { cursor: pointer; font-size: 20px; }
+        .btn-icon:hover { color: var(--win-acc); }
 
         #call-box { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 9999; flex-direction: column; align-items: center; justify-content: center; }
     </style>
@@ -103,11 +105,11 @@ const ui = `
 <body>
     <div id="auth" style="position:fixed; inset:0; background:var(--win-dark); z-index:10000; display:flex; align-items:center; justify-content:center;">
         <div style="background:#2b2b2b; padding:40px; border-radius:12px; border:1px solid var(--brd); width:320px; text-align:center;">
-            <h2 style="margin-bottom:25px">00 Messenger</h2>
-            <input id="un" placeholder="Имя пользователя" style="width:100%; padding:12px; background:#1a1a1a; border:1px solid #444; color:white; margin-bottom:10px; border-radius:6px;">
-            <input id="pw" type="password" placeholder="Пароль" style="width:100%; padding:12px; background:#1a1a1a; border:1px solid #444; color:white; margin-bottom:20px; border-radius:6px;">
-            <button onclick="authReq('login')" style="width:100%; padding:12px; background:var(--win-acc); border:none; border-radius:6px; font-weight:bold; cursor:pointer">Войти</button>
-            <p onclick="authReq('reg')" style="font-size:12px; color:#888; cursor:pointer; margin-top:15px">Нет аккаунта? Зарегистрироваться</p>
+            <h2>00 Messenger</h2>
+            <input id="un" placeholder="Логин" style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #444; color:white; margin-bottom:10px; border-radius:4px;">
+            <input id="pw" type="password" placeholder="Пароль" style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #444; color:white; margin-bottom:20px; border-radius:4px;">
+            <button onclick="authReq('login')" style="width:100%; padding:10px; background:var(--win-acc); border:none; border-radius:4px; font-weight:bold; cursor:pointer">Войти</button>
+            <p onclick="authReq('reg')" style="font-size:12px; color:#888; cursor:pointer; margin-top:15px">Регистрация</p>
         </div>
     </div>
 
@@ -124,11 +126,12 @@ const ui = `
         
         <div id="messages"></div>
 
-        <div class="input-panel" id="panel">
-            <div id="resizer"></div>
+        <div class="input-panel" id="panel" style="height: 100px;">
+            <div id="height-slider"></div>
+            
             <div class="controls">
                 <label class="btn-icon">📎<input type="file" style="display:none" onchange="up(this)"></label>
-                <textarea id="mi" placeholder="Сообщение..." rows="1" onkeypress="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();send();}"></textarea>
+                <textarea id="mi" placeholder="Сообщение..." onkeypress="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();send();}"></textarea>
                 <span id="rb" class="btn-icon" onclick="tRec()">🎤</span>
                 <span class="btn-icon" onclick="send()" style="color:var(--win-acc)">➔</span>
             </div>
@@ -148,16 +151,18 @@ const ui = `
         const socket = io(); let me='', target=null, peer, rec, chunks=[], isRec=false;
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-        // Ресайзер высоты
-        const resizer = document.getElementById('resizer');
+        // Логика ползунка
+        const slider = document.getElementById('height-slider');
         const panel = document.getElementById('panel');
-        resizer.onmousedown = (e) => {
-            document.onmousemove = (e) => {
-                let h = window.innerHeight - e.clientY;
-                if(h > 60 && h < 400) panel.style.height = h + 'px';
-            };
-            document.onmouseup = () => document.onmousemove = null;
+        let isDragging = false;
+
+        slider.onmousedown = () => isDragging = true;
+        document.onmousemove = (e) => {
+            if (!isDragging) return;
+            let h = window.innerHeight - e.clientY;
+            if (h > 80 && h < 500) panel.style.height = h + 'px';
         };
+        document.onmouseup = () => isDragging = false;
 
         function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
         function logout() { localStorage.clear(); location.reload(); }
@@ -169,7 +174,6 @@ const ui = `
             target = u;
             document.querySelectorAll('.u-card').forEach(c => c.classList.remove('active'));
             event.currentTarget?.classList.add('active');
-            
             document.getElementById('chat-title').innerText = u || 'Общий чат';
             document.getElementById('call-btn').style.display = u ? 'block' : 'none';
             document.getElementById('messages').innerHTML = '';
@@ -205,14 +209,12 @@ const ui = `
             const div = document.createElement('div');
             div.className = 'msg ' + (m.from === me ? 'me' : 'them');
             let html = \`<small style="display:block; margin-bottom:4px; opacity:0.6">\${m.from}</small>\`;
-            
             if(m.isVoice) html += \`<audio src="\${m.file.data}" controls style="width:210px; height:40px"></audio>\`;
             else if(m.file) {
                 if(m.file.type.startsWith('image')) html += \`<img src="\${m.file.data}" style="max-width:100%; border-radius:4px">\`;
                 else html += \`<a href="\${m.file.data}" download style="color:#60cdff">📄 \${m.file.name}</a>\`;
             }
             if(m.text) html += \`<div>\${m.text}</div>\`;
-            
             div.innerHTML = html; msgs.appendChild(div);
             msgs.scrollTop = msgs.scrollHeight;
         }
@@ -249,7 +251,7 @@ const ui = `
                 await peer.setRemoteDescription(new RTCSessionDescription(d.offer));
                 const ans = await peer.createAnswer(); await peer.setLocalDescription(ans);
                 socket.emit('ans', {to:d.from, ans});
-                peer.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
+                peer.ontrack = e => { const au = new Audio(); au.srcObject = e.streams[0]; au.play(); };
             };
         });
         socket.on('call_ok', d => peer.setRemoteDescription(new RTCSessionDescription(d.ans)));
@@ -265,4 +267,4 @@ const ui = `
 `;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { console.log('🚀 Messenger Ultra Running'); });
+http.listen(PORT, '0.0.0.0', () => { console.log('🚀 Server started'); });

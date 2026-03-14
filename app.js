@@ -54,7 +54,7 @@ io.on('connection', (socket) => {
 
     socket.on('get_history', (t) => {
         if (!currentUser) return;
-        const h = db.messages.filter(m => (!t && !m.to) || (m.to===t && m.from===currentUser) || (m.to===currentUser && m.from===t)).slice(-100);
+        const h = db.messages.filter(m => (!t && !m.to) || (m.to===t && m.from===currentUser) || (m.to===currentUser && m.from===target)).slice(-100);
         socket.emit('history', h);
     });
 
@@ -74,7 +74,16 @@ io.on('connection', (socket) => {
         else { io.to(data.to).to(currentUser).emit('chat message', msg); }
     });
 
-    // WebRTC Сигналинг
+    // УДАЛЕНИЕ СООБЩЕНИЯ
+    socket.on('delete_msg', (id) => {
+        const idx = db.messages.findIndex(m => m.id === id && m.from === currentUser);
+        if (idx !== -1) {
+            db.messages.splice(idx, 1);
+            saveDB();
+            io.emit('msg_deleted', id);
+        }
+    });
+
     socket.on('call-user', (data) => io.to(data.to).emit('incoming-call', { from: currentUser, offer: data.offer }));
     socket.on('answer-call', (data) => io.to(data.to).emit('call-accepted', { answer: data.answer }));
     socket.on('ice-candidate', (d) => io.to(d.to).emit('ice-candidate', d.candidate));
@@ -96,44 +105,35 @@ const htmlContent = `
         :root { --bg: #0b0e14; --side: #171c26; --accent: #00aff0; --msg-in: #222b3a; --msg-out: #005c84; --text: #f5f5f5; }
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
-        
         #sidebar { width: 350px; background: var(--side); display: flex; flex-direction: column; border-right: 1px solid #222; transition: 0.3s; z-index: 10; }
         #chat { flex: 1; display: flex; flex-direction: column; background: #000; position: relative; }
-        
         @media (max-width: 800px) {
             #sidebar { width: 100%; position: absolute; height: 100%; }
             #chat { width: 100%; position: absolute; height: 100%; transform: translateX(100%); transition: 0.3s; }
             body.chat-open #sidebar { transform: translateX(-20%); opacity: 0.5; }
             body.chat-open #chat { transform: translateX(0); }
         }
-
         .header { padding: 15px 20px; background: var(--side); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid #222; min-height: 65px; }
-        #msgs { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 8px; background: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-blend-mode: overlay; background-color: #080a0f; }
-        
+        #msgs { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 8px; background: #080a0f; }
         #auth { position: fixed; inset: 0; background: var(--bg); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-        .auth-card { background: var(--side); padding: 40px; border-radius: 25px; text-align: center; width: 90%; max-width: 400px; box-shadow: 0 15px 35px rgba(0,0,0,0.5); }
-        input { background: #080a0f; border: 1px solid #333; color: #fff; padding: 14px; margin: 10px 0; border-radius: 12px; width: 100%; outline: none; font-size: 16px; }
+        .auth-card { background: var(--side); padding: 40px; border-radius: 25px; text-align: center; width: 90%; max-width: 400px; }
+        input { background: #080a0f; border: 1px solid #333; color: #fff; padding: 14px; margin: 10px 0; border-radius: 12px; width: 100%; outline: none; }
         .btn { background: var(--accent); border: none; padding: 14px; border-radius: 12px; color: #fff; font-weight: bold; width: 100%; cursor: pointer; }
-
         .u-item { padding: 12px 18px; cursor: pointer; display: flex; align-items: center; gap: 15px; }
         .u-item.active { background: #222b3a; border-left: 4px solid var(--accent); }
         .ava { width: 48px; height: 48px; border-radius: 50%; background: #3d4451; display: flex; align-items: center; justify-content: center; font-weight: bold; position: relative; flex-shrink: 0; }
         .status-dot { width: 12px; height: 12px; background: #444; border-radius: 50%; border: 2px solid var(--side); position: absolute; bottom: 0; right: 0; }
         .status-dot.on { background: #00ff88; box-shadow: 0 0 8px #00ff88; }
-
         .m { max-width: 80%; padding: 10px 14px; border-radius: 16px; font-size: 15px; position: relative; animation: slideUp 0.2s ease-out; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } }
         .m.in { align-self: flex-start; background: var(--msg-in); border-bottom-left-radius: 4px; }
         .m.out { align-self: flex-end; background: var(--msg-out); border-bottom-right-radius: 4px; }
-        .m audio { height: 35px; width: 210px; filter: invert(0.9); margin-top: 5px; }
-        .m img { max-width: 100%; border-radius: 10px; margin-top: 5px; }
-
+        .m .del-btn { position: absolute; top: -8px; right: -8px; background: #ff3b30; color: #fff; border-radius: 50%; width: 20px; height: 20px; font-size: 14px; display: none; align-items: center; justify-content: center; cursor: pointer; border: 2px solid var(--bg); }
+        .m.out:hover .del-btn { display: flex; }
+        .m audio { height: 35px; width: 200px; filter: invert(0.9); margin-top: 5px; }
         #input-area { padding: 10px 15px; background: var(--side); display: flex; gap: 10px; align-items: center; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
         #msg-in { flex: 1; background: #080a0f; border: 1px solid #333; color: #fff; padding: 12px 18px; border-radius: 25px; outline: none; }
         .act-btn { font-size: 24px; cursor: pointer; user-select: none; }
-        .act-btn.recording { color: #ff3b30; animation: pulse 1s infinite; }
-        @keyframes pulse { 50% { opacity: 0.3; } }
-
         #call-ui { display: none; position: fixed; inset: 0; background: rgba(11,14,20,0.98); z-index: 2000; flex-direction: column; align-items: center; justify-content: center; }
         .back-btn { display: none; font-size: 24px; margin-right: 10px; cursor: pointer; }
         @media (max-width: 800px) { .back-btn { display: block; } }
@@ -149,7 +149,6 @@ const htmlContent = `
             <p style="opacity:0.5; cursor:pointer" onclick="auth('register')">Создать аккаунт</p>
         </div>
     </div>
-
     <div id="sidebar">
         <div class="header"><b>00 Ultra Elite</b></div>
         <div class="u-item active" onclick="setChat(null)">
@@ -158,7 +157,6 @@ const htmlContent = `
         </div>
         <div id="u-list" style="flex:1; overflow-y:auto;"></div>
     </div>
-
     <div id="chat">
         <div class="header">
             <div class="back-btn" onclick="closeChat()">←</div>
@@ -167,7 +165,6 @@ const htmlContent = `
             <div class="act-btn" id="call-trigger" style="display:none" onclick="makeCall()">📞</div>
         </div>
         <div id="msgs"></div>
-        <div id="voice-timer" style="display:none; text-align:center; color:#ff3b30; font-weight:bold;">● Запись...</div>
         <div id="input-area">
             <label class="act-btn">📎<input type="file" id="f-in" style="display:none" onchange="upFile()"></label>
             <input type="text" id="msg-in" placeholder="Сообщение...">
@@ -175,7 +172,6 @@ const htmlContent = `
             <div class="act-btn" onclick="send()">➤</div>
         </div>
     </div>
-
     <div id="call-ui">
         <div class="ava" id="c-ava" style="width:120px; height:120px; font-size:3em;">?</div>
         <h2 id="c-status">Звонок...</h2>
@@ -184,47 +180,28 @@ const htmlContent = `
             <div class="act-btn" onclick="endCall()" style="background:#ff3b30; padding:20px; border-radius:50%">📵</div>
         </div>
     </div>
-
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
         let me = "", target = null, recorder, chunks = [], peer;
-
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js');
-            Notification.requestPermission();
-        }
-
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); Notification.requestPermission(); }
         function auth(t) { socket.emit(t, { user: user.value, pass: pass.value }); }
         socket.on('login_success', d => {
             me = d.user; localStorage.setItem('00_u', d.user); localStorage.setItem('00_p', d.pass);
             document.getElementById('auth').style.display = 'none';
-            checkShare();
         });
-
-        function checkShare() {
-            const p = new URLSearchParams(window.location.search);
-            const txt = p.get('text') || p.get('url');
-            if(txt) { document.getElementById('msg-in').value = txt; window.history.replaceState({}, '', '/'); }
-        }
-
         window.onload = () => {
             const u = localStorage.getItem('00_u'), p = localStorage.getItem('00_p');
             if(u && p) socket.emit('login', { user: u, pass: p, isAuto: true });
         };
-
         function setChat(t) {
-            target = t;
-            document.body.classList.add('chat-open');
+            target = t; document.body.classList.add('chat-open');
             document.getElementById('call-trigger').style.display = t ? 'block' : 'none';
             document.getElementById('h-name').innerText = t || "Общий чат";
             document.getElementById('h-ava').innerText = (t || "G")[0];
-            document.getElementById('msgs').innerHTML = "";
-            socket.emit('get_history', t);
+            document.getElementById('msgs').innerHTML = ""; socket.emit('get_history', t);
         }
-
         function closeChat() { document.body.classList.remove('chat-open'); }
-
         socket.on('update_users', d => {
             const list = document.getElementById('u-list'); list.innerHTML = "";
             d.all.forEach(u => {
@@ -232,72 +209,55 @@ const htmlContent = `
                 const div = document.createElement('div');
                 div.className = 'u-item' + (target === u ? ' active' : '');
                 div.innerHTML = \`<div class="ava">\${u[0]}<div class="status-dot \${d.online.includes(u)?'on':''}"></div></div><b>\${u}</b>\`;
-                div.onclick = () => setChat(u);
-                list.appendChild(div);
+                div.onclick = () => setChat(u); list.appendChild(div);
             });
         });
-
         function send() {
             const val = document.getElementById('msg-in').value;
             if(val.trim()) { socket.emit('chat message', { text: val, to: target }); document.getElementById('msg-in').value = ''; }
         }
-
         function upFile() {
             const f = document.getElementById('f-in').files[0];
             const r = new FileReader();
             r.onload = () => socket.emit('chat message', { to: target, file: { name: f.name, data: r.result, type: f.type } });
             r.readAsDataURL(f);
         }
-
         async function startRec() {
             try {
                 const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-                recorder = new MediaRecorder(s);
-                chunks = [];
-                document.getElementById('mic-btn').classList.add('recording');
-                document.getElementById('voice-timer').style.display = 'block';
+                recorder = new MediaRecorder(s); chunks = [];
                 recorder.ondataavailable = e => chunks.push(e.data);
                 recorder.onstop = () => {
                     const b = new Blob(chunks, { type: 'audio/ogg' });
                     const r = new FileReader();
                     r.onload = () => socket.emit('chat message', { to: target, file: { data: r.result }, isVoice: true });
-                    r.readAsDataURL(b);
-                    s.getTracks().forEach(t => t.stop());
+                    r.readAsDataURL(b); s.getTracks().forEach(t => t.stop());
                 };
                 recorder.start();
-            } catch(e) { alert("Ошибка микрофона"); }
+            } catch(e) { alert("Mic error"); }
         }
-
-        function stopRec() { 
-            if(recorder) recorder.stop(); 
-            document.getElementById('mic-btn').classList.remove('recording');
-            document.getElementById('voice-timer').style.display = 'none';
-        }
-
-        socket.on('chat message', m => {
-            if((!target && !m.to) || (target && (m.from===target || m.to===target))) addM(m);
-            if(m.from !== me && Notification.permission === 'granted') {
-                new Notification(m.from, { body: m.text || "Файл или ГС" });
-            }
-        });
+        function stopRec() { if(recorder) recorder.stop(); }
+        socket.on('chat message', m => { if((!target && !m.to) || (target && (m.from===target || m.to===target))) addM(m); });
         socket.on('history', h => h.forEach(addM));
+        socket.on('msg_deleted', id => document.getElementById(id)?.remove());
 
         function addM(m) {
             const d = document.createElement('div');
             d.className = 'm ' + (m.from === me ? 'out' : 'in');
+            d.id = m.id;
             let c = \`<b>\${m.from}</b><br>\`;
+            if(m.from === me) c += \`<div class="del-btn" onclick="socket.emit('delete_msg', '\${m.id}')">×</div>\`;
             if(m.isVoice) c += \`<audio src="\${m.file.data}" controls></audio>\`;
             else if(m.file) {
                 if(m.file.type.startsWith('image')) c += \`<img src="\${m.file.data}">\`;
                 else c += \`<a href="\${m.file.data}" download="\${m.file.name}" style="color:#fff">📄 \${m.file.name}</a>\`;
             }
             c += \`<div>\${m.text}</div><small style="opacity:0.5">\${m.time}</small>\`;
-            d.innerHTML = c;
-            msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
+            d.innerHTML = c; msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
         }
 
         async function makeCall() {
-            call_ui.style.display = 'flex'; c_status.innerText = "Звоним " + target; c_ava.innerText = target[0];
+            call_ui.style.display = 'flex'; c_status.innerText = "Звоним " + target;
             peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             const s = await navigator.mediaDevices.getUserMedia({ audio: true });
             s.getTracks().forEach(t => peer.addTrack(t, s));
@@ -305,8 +265,7 @@ const htmlContent = `
             socket.emit('call-user', { to: target, offer: o });
             peer.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
         }
-
-        socket.on('incoming-call', async d => {
+        socket.on('incoming-call', d => {
             call_ui.style.display = 'flex'; c_status.innerText = "Вызов от " + d.from; ans_btn.style.display = 'block';
             ans_btn.onclick = async () => {
                 ans_btn.style.display = 'none';
@@ -331,7 +290,6 @@ const htmlContent = `
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
     console.log('-------------------------------------------');
-    console.log('🚀 00 ULTRA ELITE SUCCESS!');
-    console.log('📡 Порт: ' + PORT);
+    console.log('🚀 00 MESSENGER запущен на порту: ' + PORT);
     console.log('-------------------------------------------');
 });

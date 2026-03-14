@@ -321,3 +321,8 @@ const htmlContent = `
     </script>
 </body>
 </html>
+
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, '0.0.0.0', () => {
+    console.log('00 MESSENGER запущен на порту: ' + PORT);
+});

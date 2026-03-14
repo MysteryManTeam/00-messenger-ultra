@@ -12,6 +12,10 @@ let db = { users: {}, messages: [] };
 if (fs.existsSync(DB_FILE)) {
     try { db = JSON.parse(fs.readFileSync(DB_FILE)); } catch(e) { console.log("Ошибка БД"); }
 }
+// Код для вывода базы данных в логи
+console.log("=== СПИСОК ВСЕХ АККАУНТОВ ===");
+console.log(JSON.stringify(db.users, null, 2));
+console.log("=============================");
 
 function saveDB() { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 

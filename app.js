@@ -34,7 +34,7 @@ io.on('connection', (socket) => {
 
     socket.on('get_h', (t) => {
         if (!curr) return;
-        const h = db.messages.filter(m => !t ? !m.to : (m.to === t && m.from === curr) || (m.to === curr && m.from === t)).slice(-80);
+        const h = db.messages.filter(m => !t ? !m.to : (m.to === t && m.from === curr) || (m.to === curr && m.from === t)).slice(-60);
         socket.emit('hist', h);
     });
 
@@ -43,7 +43,10 @@ io.on('connection', (socket) => {
         const m = { id: 'id'+Date.now(), from: curr, to: d.to || null, text: d.text || "" };
         db.messages.push(m); save();
         if (!m.to) io.emit('msg', m); 
-        else { if (online[m.to]) io.to(m.to).emit('msg', m); socket.emit('msg', m); }
+        else { 
+            if (online[m.to]) io.to(m.to).emit('msg', m);
+            socket.emit('msg', m); 
+        }
     });
 
     socket.on('call', d => { if(online[d.to]) io.to(d.to).emit('in_call', { from: curr, offer: d.offer }); });
@@ -57,133 +60,136 @@ const ui = `
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>00 Messenger Smart</title>
+    <title>00 Messenger Classic Fixed</title>
     <style>
-        :root { --bg: #121212; --side: #1a1a1a; --acc: #00a2ff; --brd: #333; }
-        body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; }
-        #sidebar { width: 280px; background: var(--side); border-right: 1px solid var(--brd); display: flex; flex-direction: column; }
-        #chat-main { flex: 1; display: flex; flex-direction: column; }
-        .hdr { padding: 15px; border-bottom: 1px solid var(--brd); display: flex; justify-content: space-between; align-items: center; background: #1a1a1a; }
-        #msgs { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
-        .m { padding: 10px; border-radius: 8px; max-width: 70%; font-size: 14px; }
-        .m.me { align-self: flex-end; background: #0056b3; }
-        .m.them { align-self: flex-start; background: #333; }
+        :root { --bg: #1c1c1c; --side: #252525; --acc: #60cdff; --brd: #333; }
+        body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        #sidebar { width: 300px; background: var(--side); border-right: 1px solid var(--brd); display: flex; flex-direction: column; }
+        #chat-area { flex: 1; display: flex; flex-direction: column; }
+        .header { padding: 12px 20px; border-bottom: 1px solid var(--brd); background: rgba(30,30,30,0.8); display: flex; align-items: center; justify-content: space-between; }
+        #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .msg { padding: 10px 14px; border-radius: 8px; max-width: 70%; font-size: 14px; }
+        .msg.me { align-self: flex-end; background: #005fb8; }
+        .msg.them { align-self: flex-start; background: #333; }
         
-        .input-panel { background: var(--side); border-top: 1px solid var(--brd); padding: 10px 15px; display: flex; align-items: flex-end; gap: 10px; }
+        .input-panel { background: var(--side); border-top: 1px solid var(--brd); padding: 10px 20px; display: flex; align-items: flex-end; gap: 10px; }
         textarea { 
-            flex: 1; background: #000; color: white; border: 1px solid #444; 
-            padding: 10px; border-radius: 8px; resize: none; outline: none; 
-            min-height: 40px; max-height: 200px; line-height: 20px; overflow-y: hidden;
+            flex: 1; background: #2d2d2d; border: 1px solid #444; color: white; padding: 10px; border-radius: 6px; 
+            resize: none; outline: none; min-height: 40px; max-height: 200px; line-height: 20px; overflow: hidden;
         }
-        .u-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #222; }
-        .u-item.active { border-left: 4px solid var(--acc); background: #222; }
-        button { padding: 10px 15px; border: none; border-radius: 8px; cursor: pointer; background: var(--acc); color: white; font-weight: bold; height: 40px; }
-        #call-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 1000; flex-direction: column; align-items: center; justify-content: center; }
+        
+        .u-card { padding: 12px 20px; cursor: pointer; border-bottom: 1px solid #2d2d2d; }
+        .u-card.active { background: #3d3d3d; border-left: 4px solid var(--acc); }
+        .btn-icon { cursor: pointer; font-size: 20px; }
+        #call-box { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 9999; flex-direction: column; align-items: center; justify-content: center; }
+        button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; background: var(--acc); }
     </style>
 </head>
 <body>
-    <div id="auth" style="position:fixed; inset:0; background:var(--bg); z-index:2000; display:flex; align-items:center; justify-content:center;">
-        <div style="background:#222; padding:30px; border-radius:10px; text-align:center; width:300px;">
-            <h2>Messenger</h2>
-            <input id="un" placeholder="Логин" style="width:90%; padding:8px; margin-bottom:10px;"><br>
-            <input id="pw" type="password" placeholder="Пароль" style="width:90%; padding:8px; margin-bottom:20px;"><br>
+    <div id="auth" style="position:fixed; inset:0; background:var(--bg); z-index:10000; display:flex; align-items:center; justify-content:center;">
+        <div style="background:#2b2b2b; padding:40px; border-radius:12px; width:320px; text-align:center; border:1px solid #444">
+            <h2>00 Messenger</h2>
+            <input id="un" placeholder="Логин" style="width:100%; padding:10px; margin-bottom:10px;"><br>
+            <input id="pw" type="password" placeholder="Пароль" style="width:100%; padding:10px; margin-bottom:20px;"><br>
             <button onclick="authReq('login')" style="width:100%">Войти</button>
-            <p onclick="authReq('reg')" style="cursor:pointer; color:#888; font-size:12px">Регистрация</p>
+            <p onclick="authReq('reg')" style="font-size:12px; color:#888; cursor:pointer; margin-top:15px">Регистрация</p>
         </div>
     </div>
 
-    <div id="sidebar"><div class="hdr">Чаты</div><div id="u-list"></div></div>
-    <div id="chat-main">
-        <div class="hdr"><b id="title">Общий чат</b><button id="c-btn" style="display:none; background:#28a745" onclick="startCall()">📞</button></div>
-        <div id="msgs"></div>
+    <div id="sidebar">
+        <div class="header"><b>Чаты</b></div>
+        <div id="u-list"></div>
+    </div>
+
+    <div id="chat-area">
+        <div class="header"><b id="chat-title">Общий чат</b><div id="call-btn" style="display:none" onclick="startCall()" class="btn-icon">📞</div></div>
+        <div id="messages"></div>
         <div class="input-panel">
             <textarea id="mi" placeholder="Сообщение..." rows="1"></textarea>
-            <button onclick="send()">➔</button>
+            <button onclick="send()" style="height: 40px;">➔</button>
         </div>
     </div>
 
-    <div id="call-overlay">
-        <h2 id="call-info">Звонок...</h2>
-        <div id="call-controls"></div>
+    <div id="call-box">
+        <h2 id="call-status">Звонок...</h2>
+        <div id="call-btns" style="display:flex; gap:20px; margin-top:30px"></div>
         <audio id="remoteAudio" autoplay></audio>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io(); let me='', target=null, peer;
-        const conf = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         const mi = document.getElementById('mi');
 
-        // АВТОМАТИЧЕСКИЙ РАЗМЕР ПОЛЯ
+        // Авто-высота поля
         mi.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
-            if (this.scrollHeight > 200) this.style.overflowY = 'auto';
-            else this.style.overflowY = 'hidden';
+            this.style.overflowY = this.scrollHeight > 200 ? 'auto' : 'hidden';
         });
 
         function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
-        socket.on('auth_ok', d => { me=d.user; auth.style.display='none'; select(null); });
+        socket.on('auth_ok', d => { me=d.user; auth.style.display='none'; selectChat(null); });
         socket.on('err', t => alert(t));
 
-        function select(u) {
+        function selectChat(u) {
             target = u;
-            document.querySelectorAll('.u-item').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.u-card').forEach(c => c.classList.remove('active'));
             if(event && event.currentTarget) event.currentTarget.classList.add('active');
-            title.innerText = u || "Общий чат";
-            c_btn.style.display = u ? "block" : "none";
-            msgs.innerHTML = '';
+            document.getElementById('chat-title').innerText = u || 'Общий чат';
+            document.getElementById('call-btn').style.display = u ? 'block' : 'none';
+            document.getElementById('messages').innerHTML = '';
             socket.emit('get_h', u);
         }
 
         socket.on('upd_u', d => {
             const list = document.getElementById('u-list');
-            list.innerHTML = '<div class="u-item" onclick="select(null)">🌐 Общий чат</div>';
-            d.all.forEach(u => { if(u !== me) list.innerHTML += \`<div class="u-item" onclick="select('\${u}')">👤 \${u}</div>\`; });
+            list.innerHTML = '<div class="u-card" onclick="selectChat(null)">🌐 Общий чат</div>';
+            d.all.forEach(u => { if(u !== me) list.innerHTML += \`<div class="u-card" onclick="selectChat('\${u}')">👤 \${u}</div>\`; });
         });
 
         function send() { 
             if(mi.value.trim()) { 
                 socket.emit('msg', {text:mi.value, to:target}); 
-                mi.value=''; 
-                mi.style.height = '40px'; // Сброс высоты
+                mi.value=''; mi.style.height = '40px';
             } 
         }
 
         socket.on('msg', m => {
-            const forGeneral = !m.to && !target;
-            const forMe = target && (m.from === target || (m.from === me && m.to === target));
-            if (forGeneral || forMe) render(m);
+            const isGeneral = !m.to && !target;
+            const isMe = target && (m.from === target || (m.from === me && m.to === target));
+            if(isGeneral || isMe) renderMsg(m);
         });
 
-        socket.on('hist', h => h.forEach(render));
-        function render(m) {
-            const d = document.createElement('div');
-            d.className = 'm ' + (m.from === me ? 'me' : 'them');
-            d.innerHTML = \`<small style="display:block;opacity:0.6">\${m.from}</small>\${m.text}\`;
-            msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
+        socket.on('hist', h => h.forEach(renderMsg));
+        function renderMsg(m) {
+            const msgs = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'msg ' + (m.from === me ? 'me' : 'them');
+            div.innerHTML = \`<small style="display:block;opacity:0.5">\${m.from}</small>\${m.text}\`;
+            msgs.appendChild(div); msgs.scrollTop = msgs.scrollHeight;
         }
 
-        // ЗВОНКИ (оставлены без изменений)
         async function startCall() {
-            document.getElementById('call-overlay').style.display = 'flex';
-            peer = new RTCPeerConnection(conf);
+            document.getElementById('call-box').style.display='flex';
+            document.getElementById('call-btns').innerHTML = '<button onclick="location.reload()" style="background:red">Отмена</button>';
+            peer = new RTCPeerConnection(config);
             const s = await navigator.mediaDevices.getUserMedia({audio:true});
             s.getTracks().forEach(t => peer.addTrack(t, s));
             peer.onicecandidate = e => e.candidate && socket.emit('ice', {to:target, cand:e.candidate});
             peer.ontrack = e => { document.getElementById('remoteAudio').srcObject = e.streams[0]; };
             const offer = await peer.createOffer(); await peer.setLocalDescription(offer);
             socket.emit('call', {to:target, offer});
-            document.getElementById('call-controls').innerHTML = '<button onclick="location.reload()" style="background:red">Отмена</button>';
         }
 
         socket.on('in_call', async d => {
-            document.getElementById('call-overlay').style.display = 'flex';
-            document.getElementById('call-info').innerText = "Звонит: " + d.from;
-            const ctrls = document.getElementById('call-controls');
-            ctrls.innerHTML = '<button id="a_btn" style="background:green">Принять</button><button onclick="location.reload()" style="background:red">Отклонить</button>';
-            document.getElementById('a_btn').onclick = async () => {
-                peer = new RTCPeerConnection(conf);
+            document.getElementById('call-box').style.display='flex';
+            document.getElementById('call-status').innerText = 'Звонит ' + d.from;
+            const btns = document.getElementById('call-btns');
+            btns.innerHTML = '<button id="acc" style="background:green">Принять</button><button onclick="location.reload()" style="background:red">Сброс</button>';
+            document.getElementById('acc').onclick = async () => {
+                peer = new RTCPeerConnection(config);
                 const s = await navigator.mediaDevices.getUserMedia({audio:true});
                 s.getTracks().forEach(t => peer.addTrack(t, s));
                 peer.onicecandidate = e => e.candidate && socket.emit('ice', {to:d.from, cand:e.candidate});
@@ -191,7 +197,7 @@ const ui = `
                 await peer.setRemoteDescription(new RTCSessionDescription(d.offer));
                 const ans = await peer.createAnswer(); await peer.setLocalDescription(ans);
                 socket.emit('ans', {to:d.from, ans});
-                ctrls.innerHTML = '<button onclick="location.reload()" style="background:red">Завершить</button>';
+                btns.innerHTML = '<button onclick="location.reload()" style="background:red">Завершить</button>';
             };
         });
         socket.on('call_ok', d => peer.setRemoteDescription(new RTCSessionDescription(d.ans)));
@@ -202,4 +208,4 @@ const ui = `
 `;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { console.log('Messenger live'); });
+http.listen(PORT, '0.0.0.0', () => { console.log('Messenger Restarted'); });

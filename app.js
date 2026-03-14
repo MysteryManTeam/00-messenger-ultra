@@ -34,7 +34,7 @@ io.on('connection', (socket) => {
 
     socket.on('get_h', (t) => {
         if (!curr) return;
-        const h = db.messages.filter(m => !t ? !m.to : (m.to === t && m.from === curr) || (m.to === curr && m.from === t)).slice(-100);
+        const h = db.messages.filter(m => !t ? !m.to : (m.to === t && m.from === curr) || (m.to === curr && m.from === t)).slice(-50);
         socket.emit('hist', h);
     });
 
@@ -49,9 +49,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('call', d => { if(online[d.to]) io.to(d.to).emit('in_call', { from: curr, offer: d.offer }); });
-    socket.on('ans', d => { if(online[d.to]) io.to(d.to).emit('call_ok', { ans: d.ans }); });
-    socket.on('ice', d => { if(online[d.to]) io.to(d.to).emit('ice', { cand: d.cand }); });
     socket.on('disconnect', () => { if(curr){ delete online[curr]; io.emit('upd_u', { all: Object.keys(db.users), on: Object.keys(online) }); } });
 });
 
@@ -60,53 +57,40 @@ const ui = `
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>00 Messenger - ЗАШИБИСЬ ВЕРСИЯ</title>
+    <title>00 Messenger - Classic Stable</title>
     <style>
-        :root { --bg: #0b0b0b; --side: #141414; --acc: #00a2ff; --brd: #222; }
-        body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
-        #sidebar { width: 260px; background: var(--side); border-right: 1px solid var(--brd); display: flex; flex-direction: column; }
+        body { background: #111; color: white; font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
+        #sidebar { width: 250px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; }
         #chat-main { flex: 1; display: flex; flex-direction: column; }
-        .hdr { padding: 15px; border-bottom: 1px solid var(--brd); display: flex; justify-content: space-between; align-items: center; background: #181818; }
-        #msgs { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 8px; }
-        .m { padding: 10px 14px; border-radius: 12px; max-width: 75%; font-size: 14px; word-wrap: break-word; }
-        .m.me { align-self: flex-end; background: #0056b3; }
-        .m.them { align-self: flex-start; background: #2a2a2a; }
-        
-        .input-panel { background: var(--side); border-top: 1px solid var(--brd); padding: 15px; display: flex; gap: 10px; }
-        textarea { flex: 1; background: #000; color: white; border: 1px solid #333; padding: 10px; border-radius: 6px; resize: none; outline: none; height: 40px; }
-        
-        .u-item { padding: 12px 15px; cursor: pointer; border-bottom: 1px solid #1a1a1a; transition: 0.1s; }
-        .u-item:hover { background: #1a1a1a; }
-        .u-item.active { border-left: 3px solid var(--acc); background: #1a1a1a; }
-        
-        button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; background: var(--acc); color: white; font-weight: bold; }
-        .btn-exit { background: transparent; color: #ff4d4d; border: 1px solid #ff4d4d; padding: 3px 8px; font-size: 11px; }
+        .hdr { padding: 15px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; background: #222; }
+        #msgs { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        .m { padding: 10px; border-radius: 8px; max-width: 80%; background: #333; word-wrap: break-word; }
+        .m.me { align-self: flex-end; background: #007bff; }
+        .input-panel { padding: 15px; background: #1a1a1a; border-top: 1px solid #333; display: flex; gap: 10px; }
+        textarea { flex: 1; height: 40px; background: #000; color: white; border: 1px solid #444; padding: 10px; border-radius: 5px; resize: none; outline: none; }
+        .u-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #222; }
+        .u-item.active { background: #333; border-left: 3px solid #007bff; }
+        button { padding: 10px; border: none; border-radius: 5px; cursor: pointer; background: #007bff; color: white; font-weight: bold; }
+        .btn-exit { background: none; color: #ff4d4d; border: 1px solid #ff4d4d; padding: 5px; font-size: 12px; }
     </style>
 </head>
 <body>
-    <div id="auth" style="position:fixed; inset:0; background:var(--bg); z-index:999; display:flex; align-items:center; justify-content:center;">
-        <div style="background:#181818; padding:30px; border-radius:12px; text-align:center; width:280px; border: 1px solid #333;">
-            <h2 style="color:var(--acc); margin:0 0 20px 0;">00 Messenger</h2>
-            <input id="un" placeholder="Логин" style="width:100%; padding:10px; margin-bottom:10px; box-sizing:border-box; background:#000; color:#fff; border:1px solid #333;"><br>
-            <input id="pw" type="password" placeholder="Пароль" style="width:100%; padding:10px; margin-bottom:20px; box-sizing:border-box; background:#000; color:#fff; border:1px solid #333;"><br>
-            <button onclick="authReq('login')" style="width:100%">Войти</button>
-            <p onclick="authReq('reg')" style="cursor:pointer; color:#666; font-size:12px; margin-top:15px">Регистрация</p>
+    <div id="auth" style="position:fixed; inset:0; background:#111; z-index:999; display:flex; align-items:center; justify-content:center;">
+        <div style="background:#222; padding:30px; border-radius:10px; text-align:center;">
+            <h2>00 Messenger</h2>
+            <input id="un" placeholder="Логин" style="margin-bottom:10px; padding:8px;"><br>
+            <input id="pw" type="password" placeholder="Пароль" style="margin-bottom:20px; padding:8px;"><br>
+            <button onclick="authReq('login')">Войти</button>
+            <button onclick="authReq('reg')" style="background:#555">Рег</button>
         </div>
     </div>
 
     <div id="sidebar">
-        <div class="hdr">
-            <b>Чаты</b>
-            <button class="btn-exit" onclick="logout()">Выход</button>
-        </div>
+        <div class="hdr"><b>Чаты</b> <button class="btn-exit" onclick="logout()">Выход</button></div>
         <div id="u-list"></div>
     </div>
-
     <div id="chat-main">
-        <div class="hdr">
-            <b id="title">Общий чат</b>
-            <button id="c-btn" style="display:none; background:#28a745" onclick="startCall()">📞</button>
-        </div>
+        <div class="hdr"><b id="title">Общий чат</b></div>
         <div id="msgs"></div>
         <div class="input-panel">
             <textarea id="mi" placeholder="Сообщение..."></textarea>
@@ -119,19 +103,19 @@ const ui = `
         const socket = io(); let me='', target=null;
 
         window.onload = () => {
-            const saved = localStorage.getItem('00_auth_cache');
+            const saved = localStorage.getItem('00_saved_auth');
             if (saved) {
                 const {user, pass} = JSON.parse(saved);
                 socket.emit('auth', {type:'login', user, pass, isAuto: true});
             }
         };
 
-        function logout() { localStorage.removeItem('00_auth_cache'); location.reload(); }
+        function logout() { localStorage.removeItem('00_saved_auth'); location.reload(); }
         function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
         
         socket.on('auth_ok', d => { 
             me=d.user; auth.style.display='none'; 
-            localStorage.setItem('00_auth_cache', JSON.stringify({user: d.user, pass: d.pass}));
+            localStorage.setItem('00_saved_auth', JSON.stringify({user: d.user, pass: d.pass}));
             select(null); 
         });
 
@@ -142,7 +126,6 @@ const ui = `
             document.querySelectorAll('.u-item').forEach(el => el.classList.remove('active'));
             if(event && event.currentTarget && event.currentTarget.classList) event.currentTarget.classList.add('active');
             title.innerText = u || "Общий чат";
-            c_btn.style.display = u ? "block" : "none";
             msgs.innerHTML = '';
             socket.emit('get_h', u);
         }
@@ -167,8 +150,8 @@ const ui = `
         socket.on('hist', h => h.forEach(render));
         function render(m) {
             const d = document.createElement('div');
-            d.className = 'm ' + (m.from === me ? 'me' : 'them');
-            d.innerHTML = \`<small style="display:block; font-size:10px; opacity:0.5">\${m.from}</small>\${m.text}\`;
+            d.className = 'm ' + (m.from === me ? 'me' : '');
+            d.innerHTML = \`<small style="display:block; font-size:10px; opacity:0.6">\${m.from}</small>\${m.text}\`;
             msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
         }
     </script>

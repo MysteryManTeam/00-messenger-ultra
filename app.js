@@ -1,7 +1,7 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
-const io = require('socket.io')(http, { cors: { origin: "*" } });
+const io = require('socket.io')(http, { cors: { origin: "*" }, maxHttpBufferSize: 1e8 }); // Лимит 100мб
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
@@ -10,60 +10,53 @@ const DB_FILE = path.join(__dirname, 'database.json');
 let db = { users: {}, messages: [] };
 
 if (fs.existsSync(DB_FILE)) {
-    try { db = JSON.parse(fs.readFileSync(DB_FILE)); } catch(e) { console.log("Ошибка БД"); }
+    try { db = JSON.parse(fs.readFileSync(DB_FILE)); } catch(e) { console.log("DB Error"); }
 }
-// Код для вывода базы данных в логи
-console.log("=== СПИСОК ВСЕХ АККАУНТОВ ===");
-console.log(JSON.stringify(db.users, null, 2));
-console.log("=============================");
-
 function saveDB() { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 
-let onlineUsers = new Set();
+let onlineUsers = {};
 
 app.get('/', (req, res) => { res.send(htmlContent); });
 
 io.on('connection', (socket) => {
     let currentUser = null;
 
-    socket.on('register', ({ user, pass }) => {
-        if (!user || !pass) return socket.emit('err', 'Заполни поля!');
-        if (db.users[user]) return socket.emit('err', 'Ник занят');
-        db.users[user] = { password: bcrypt.hashSync(pass, 10) };
-        saveDB();
-        socket.emit('system', 'Регистрация OK! Входи.');
-    });
-
     socket.on('login', ({ user, pass, isAuto }) => {
         const found = db.users[user];
         if (found && (isAuto ? pass === found.password : bcrypt.compareSync(pass, found.password))) {
             currentUser = user;
             socket.join(user);
-            onlineUsers.add(user);
+            onlineUsers[user] = socket.id;
             socket.emit('login_success', { user, pass: found.password });
-            io.emit('update_users', { all: Object.keys(db.users), online: Array.from(onlineUsers) });
-        } else {
-            socket.emit('err', 'Ошибка входа');
-        }
+            io.emit('update_users', { all: Object.keys(db.users), online: Object.keys(onlineUsers) });
+        } else { socket.emit('err', 'Access Denied'); }
+    });
+
+    socket.on('register', ({ user, pass }) => {
+        if (!user || !pass || db.users[user]) return socket.emit('err', 'User exists');
+        db.users[user] = { password: bcrypt.hashSync(pass, 10) };
+        saveDB();
+        socket.emit('system', 'Registered!');
     });
 
     socket.on('get_history', (target) => {
         if (!currentUser) return;
         const history = db.messages.filter(m => 
-            (!target && !m.to) || 
-            (m.to === target && m.from === currentUser) || 
-            (m.to === currentUser && m.from === target)
-        ).slice(-150);
+            (!target && !m.to) || (m.to === target && m.from === currentUser) || (m.to === currentUser && m.from === target)
+        ).slice(-50);
         socket.emit('history', history);
     });
 
+    // ОБРАБОТКА СООБЩЕНИЙ (ТЕКСТ, ФАЙЛЫ, ГОЛОС)
     socket.on('chat message', (data) => {
-        if (!currentUser || !data.text.trim()) return;
+        if (!currentUser) return;
         const msg = {
             id: Math.random().toString(36).substr(2, 9),
             from: currentUser,
             to: data.to || null,
-            text: data.text,
+            text: data.text || "",
+            file: data.file || null, // {name, data, type}
+            isVoice: data.isVoice || false,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         db.messages.push(msg);
@@ -73,203 +66,268 @@ io.on('connection', (socket) => {
         else io.to(data.to).to(currentUser).emit('chat message', msg);
     });
 
-    socket.on('delete_message', (id) => {
-        if (!currentUser) return;
-        const idx = db.messages.findIndex(m => m.id === id && m.from === currentUser);
-        if (idx !== -1) {
-            db.messages.splice(idx, 1);
-            saveDB();
-            io.emit('message_deleted', id);
-        }
+    // СИГНАЛИНГ ДЛЯ ЗВОНКОВ (WebRTC)
+    socket.on('call-user', (data) => {
+        io.to(data.to).emit('incoming-call', { from: currentUser, offer: data.offer });
+    });
+    socket.on('answer-call', (data) => {
+        io.to(data.to).emit('call-accepted', { answer: data.answer });
+    });
+    socket.on('ice-candidate', (data) => {
+        io.to(data.to).emit('ice-candidate', data.candidate);
     });
 
     socket.on('disconnect', () => {
         if (currentUser) {
-            onlineUsers.delete(currentUser);
-            io.emit('update_users', { all: Object.keys(db.users), online: Array.from(onlineUsers) });
+            delete onlineUsers[currentUser];
+            io.emit('update_users', { all: Object.keys(db.users), online: Object.keys(onlineUsers) });
         }
     });
 });
 
 const htmlContent = `
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>00 ULTRA CORE</title>
+    <title>00 Ultra Messenger</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
-        body { background: #050505; color: #00ffea; font-family: 'Orbitron', sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .rgb-line { height: 4px; width: 100%; background: linear-gradient(90deg, #f00, #0f0, #00f, #f00); background-size: 400%; animation: rgb 5s linear infinite; flex-shrink: 0; }
-        @keyframes rgb { 0% { background-position: 0%; } 100% { background-position: 400%; } }
-
-        #auth-screen { position: fixed; inset: 0; background: #050505; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        #main-container { display: none; flex: 1; overflow: hidden; }
+        :root { --bg: #0e0e12; --side: #15151c; --accent: #00d9ff; --msg-in: #1c1c27; --msg-out: #2a2a3d; --text: #e0e0e0; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
         
-        #sidebar { width: 220px; background: #0a0a0a; border-right: 1px solid #1a1c24; display: flex; flex-direction: column; }
-        .user-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #1a1c24; font-size: 0.8em; display: flex; align-items: center; gap: 10px; }
-        .user-item:hover { background: #111; }
-        .user-item.active { background: #ff003c; color: #fff; }
-        .dot { width: 10px; height: 10px; border-radius: 50%; background: #222; }
-        .dot.online { background: #0f0; box-shadow: 0 0 8px #0f0; }
+        #auth { position: fixed; inset: 0; background: var(--bg); z-index: 1000; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+        .card { background: var(--side); padding: 40px; border-radius: 20px; text-align: center; border: 1px solid #333; box-shadow: 0 0 20px rgba(0,217,255,0.1); }
+        input { background: #000; border: 1px solid #333; color: #fff; padding: 12px; margin: 8px; border-radius: 10px; outline: none; }
+        button { background: var(--accent); border: none; padding: 12px 25px; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { box-shadow: 0 0 15px var(--accent); }
 
-        #chat-area { flex: 1; display: flex; flex-direction: column; }
-        #chat-header { padding: 12px; background: #111; font-size: 0.8em; border-bottom: 1px solid #1a1c24; text-align: center; color: #ff003c; font-weight: bold; }
-        #messages { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        #sidebar { width: 320px; background: var(--side); border-right: 1px solid #222; display: flex; flex-direction: column; }
+        .u-item { padding: 15px 20px; cursor: pointer; display: flex; align-items: center; gap: 15px; border-bottom: 1px solid #1a1a1a; }
+        .u-item.active { background: #222530; border-left: 4px solid var(--accent); }
+        .ava { width: 45px; height: 45px; border-radius: 50%; background: #333; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #444; }
+        .dot.on { background: #00ff88; box-shadow: 0 0 8px #00ff88; }
+
+        #chat { flex: 1; display: flex; flex-direction: column; position: relative; }
+        #header { padding: 15px 25px; background: var(--side); display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #222; }
+        #msgs { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
         
-        .m { background: #111; padding: 10px; border-radius: 8px; max-width: 80%; align-self: flex-start; word-wrap: break-word; cursor: default; }
-        .m.self { align-self: flex-end; background: #00ffea; color: #000; cursor: pointer; font-weight: bold; }
-        .m b { display: block; font-size: 0.7em; opacity: 0.6; margin-bottom: 3px; }
+        .m { max-width: 75%; padding: 12px 18px; border-radius: 18px; position: relative; animation: pop 0.2s ease-out; word-wrap: break-word; }
+        @keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        .m.in { align-self: flex-start; background: var(--msg-in); border-bottom-left-radius: 4px; }
+        .m.out { align-self: flex-end; background: var(--msg-out); border-bottom-right-radius: 4px; color: #fff; }
+        .m img { max-width: 100%; border-radius: 10px; margin-top: 5px; cursor: pointer; }
+        .m audio { height: 35px; margin-top: 5px; filter: invert(1); }
+        .m .time { font-size: 0.7em; opacity: 0.5; margin-left: 10px; float: right; }
 
-        .controls { padding: 15px; background: #0a0a0a; display: flex; gap: 10px; border-top: 1px solid #1a1c24; }
-        .controls input { background: #000; border: 1px solid #00ffea; color: #fff; padding: 12px; flex: 1; border-radius: 5px; outline: none; font-family: 'Orbitron'; }
-        .controls button { background: #ff003c; border: none; color: #fff; padding: 0 25px; border-radius: 5px; cursor: pointer; font-weight: bold; font-family: 'Orbitron'; }
-        
-        .logout-btn { margin-top: auto; background: #000; color: #444; border: none; padding: 15px; cursor: pointer; font-size: 10px; border-top: 1px solid #1a1c24; font-family: 'Orbitron'; }
-        .logout-btn:hover { color: #ff003c; }
+        #input-panel { padding: 15px 25px; background: var(--side); display: flex; gap: 12px; align-items: center; }
+        #msg-in { flex: 1; background: #000; border: 1px solid #333; color: #fff; padding: 12px 20px; border-radius: 25px; outline: none; }
+        .icon-btn { font-size: 1.4em; cursor: pointer; opacity: 0.7; transition: 0.2s; user-select: none; }
+        .icon-btn:hover { opacity: 1; color: var(--accent); }
+        .icon-btn.recording { color: #ff003c; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.3; } }
 
-        @media (max-width: 600px) { #sidebar { width: 70px; } .user-item span { display: none; } }
+        #call-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; flex-direction: column; align-items: center; justify-content: center; }
     </style>
 </head>
 <body>
-    <div class="rgb-line"></div>
-    
-    <div id="auth-screen">
-        <h2 style="color:#ff003c; letter-spacing: 5px;">00 ACCESS</h2>
-        <input type="text" id="userInput" placeholder="НИК" style="width:220px; margin-bottom:10px; padding:12px; background:#000; border:1px solid #00ffea; color:#fff; text-align:center; font-family:'Orbitron';">
-        <input type="password" id="passInput" placeholder="ПАРОЛЬ" style="width:220px; margin-bottom:20px; padding:12px; background:#000; border:1px solid #00ffea; color:#fff; text-align:center; font-family:'Orbitron';">
-        <div style="display:flex; gap:10px;">
-            <button onclick="handleAuth('login')" style="padding:12px 30px; background:#ff003c; border:none; color:#fff; cursor:pointer; font-family:'Orbitron';">ВХОД</button>
-            <button onclick="handleAuth('register')" style="padding:12px 30px; background:#222; border:none; color:#fff; cursor:pointer; font-family:'Orbitron';">РЕГ</button>
+    <div id="auth">
+        <div class="card">
+            <h2 style="color:var(--accent)">00 ULTRA</h2>
+            <input type="text" id="user" placeholder="Логин">
+            <input type="password" id="pass" placeholder="Пароль"><br><br>
+            <button onclick="doAuth('login')">ВОЙТИ</button>
+            <button onclick="doAuth('register')" style="background:#222; color:#fff">РЕГИСТРАЦИЯ</button>
         </div>
     </div>
 
-    <div id="main-container">
-        <div id="sidebar">
-            <div class="user-item active" id="btn-global" onclick="switchChat(null)">
-                <div class="dot online"></div> <span>ОБЩИЙ ЧАТ</span>
-            </div>
-            <div id="user-list" style="flex:1; overflow-y:auto;"></div>
-            <button class="logout-btn" onclick="logout()">LOGOUT</button>
+    <div id="sidebar">
+        <div style="padding:20px; font-weight:bold; color:var(--accent)">ЧАТЫ</div>
+        <div class="u-item active" id="g-chat" onclick="setChat(null)">
+            <div class="ava" style="background:var(--accent)">G</div>
+            <div style="flex:1">Общий чат</div>
         </div>
-        <div id="chat-area">
-            <div id="chat-header">🌐 ГЛОБАЛЬНЫЙ КАНАЛ</div>
-            <div id="messages"></div>
-            <div class="controls">
-                <input type="text" id="msgInput" placeholder="СООБЩЕНИЕ...">
-                <button id="sendBtn" onclick="send()">></button>
+        <div id="user-list"></div>
+    </div>
+
+    <div id="chat">
+        <div id="header">
+            <div style="display:flex; align-items:center; gap:15px;">
+                <div class="ava" id="h-ava">G</div>
+                <b id="h-name">Общий чат</b>
             </div>
+            <div id="call-btn" class="icon-btn" onclick="startCall()" style="display:none">📞</div>
+        </div>
+        <div id="msgs"></div>
+        <div id="input-panel">
+            <label class="icon-btn">📎<input type="file" id="f-in" style="display:none" onchange="sendFile()"></label>
+            <input type="text" id="msg-in" placeholder="Сообщение...">
+            <div id="mic-btn" class="icon-btn" onmousedown="startVoice()" onmouseup="stopVoice()" ontouchstart="startVoice()" ontouchend="stopVoice()">🎤</div>
+            <button onclick="sendText()">➤</button>
+        </div>
+    </div>
+
+    <div id="call-overlay">
+        <div class="ava" id="call-ava" style="width:100px; height:100px; font-size:2em">?</div>
+        <h2 id="call-status">Звонок...</h2>
+        <div style="display:flex; gap:20px;">
+            <button id="ans-btn" style="background:#00ff88; display:none">Ответить</button>
+            <button onclick="endCall()" style="background:#ff003c">Сбросить</button>
         </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let myName = "", currentTarget = null;
+        let myName = "", target = null, mediaRecorder, voiceChunks = [], peer;
 
-        // Элементы
-        const authScreen = document.getElementById('auth-screen');
-        const mainContainer = document.getElementById('main-container');
-        const msgInput = document.getElementById('msgInput');
-        const userList = document.getElementById('user-list');
-        const messagesDiv = document.getElementById('messages');
-        const chatHeader = document.getElementById('chat-header');
-
-        window.onload = () => {
-            const u = localStorage.getItem('00_user'), p = localStorage.getItem('00_pass');
-            if (u && p) socket.emit('login', { user: u, pass: p, isAuto: true });
-        };
-
-        function handleAuth(type) {
-            const user = document.getElementById('userInput').value;
-            const pass = document.getElementById('passInput').value;
-            socket.emit(type, { user, pass });
-        }
-
-        socket.on('login_success', (data) => {
-            myName = data.user;
-            localStorage.setItem('00_user', data.user);
-            localStorage.setItem('00_pass', data.pass);
-            authScreen.style.display = 'none';
-            mainContainer.style.display = 'flex';
-            switchChat(null);
+        function doAuth(type) { socket.emit(type, { user: user.value, pass: pass.value }); }
+        
+        socket.on('login_success', d => {
+            myName = d.user; localStorage.setItem('00_u', d.user); localStorage.setItem('00_p', d.pass);
+            auth.style.display = 'none';
+            setChat(null);
         });
 
-        function logout() { localStorage.clear(); location.reload(); }
+        window.onload = () => {
+            const u = localStorage.getItem('00_u'), p = localStorage.getItem('00_p');
+            if(u && p) socket.emit('login', { user: u, pass: p, isAuto: true });
+        };
 
-        function switchChat(target) {
-            currentTarget = target;
-            document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
-            if (!target) {
-                document.getElementById('btn-global').classList.add('active');
-                chatHeader.innerText = '🌐 ГЛОБАЛЬНЫЙ КАНАЛ';
+        function setChat(t) {
+            target = t;
+            document.querySelectorAll('.u-item').forEach(e => e.classList.remove('active'));
+            document.getElementById('call-btn').style.display = t ? 'block' : 'none';
+            if(!t) {
+                document.getElementById('g-chat').classList.add('active');
+                h_name.innerText = "Общий чат"; h_ava.innerText = "G";
             } else {
-                const el = document.getElementById('user-' + target);
-                if(el) el.classList.add('active');
-                chatHeader.innerText = '👤 ЛС: ' + target;
+                document.getElementById('u-'+t).classList.add('active');
+                h_name.innerText = t; h_ava.innerText = t[0].toUpperCase();
             }
-            messagesDiv.innerHTML = "";
-            socket.emit('get_history', target);
+            msgs.innerHTML = "";
+            socket.emit('get_history', t);
         }
 
-        socket.on('update_users', (data) => {
-            userList.innerHTML = "";
-            data.all.forEach(user => {
-                if(user === myName) return;
+        socket.on('update_users', d => {
+            const list = document.getElementById('user-list'); list.innerHTML = "";
+            d.all.forEach(u => {
+                if(u === myName) return;
                 const div = document.createElement('div');
-                div.className = 'user-item' + (currentTarget === user ? ' active' : '');
-                div.id = 'user-' + user;
-                div.innerHTML = '<div class="dot ' + (data.online.includes(user) ? 'online' : '') + '"></div> <span>' + user + '</span>';
-                div.onclick = () => switchChat(user);
-                userList.appendChild(div);
+                div.className = 'u-item' + (target === u ? ' active' : '');
+                div.id = 'u-' + u;
+                const on = d.online.includes(u);
+                div.innerHTML = \`<div class="ava">\${u[0].toUpperCase()}</div><div style="flex:1">\${u}</div><div class="dot \${on?'on':''}"></div>\`;
+                div.onclick = () => setChat(u);
+                list.appendChild(div);
             });
         });
 
-        function send() {
-            if(msgInput.value.trim()) {
-                socket.emit('chat message', { text: msgInput.value, to: currentTarget });
-                msgInput.value = '';
+        function sendText() {
+            if(document.getElementById('msg-in').value.trim()) {
+                socket.emit('chat message', { text: document.getElementById('msg-in').value, to: target });
+                document.getElementById('msg-in').value = '';
             }
         }
-        msgInput.onkeypress = (e) => { if(e.key==='Enter') send(); };
 
-        socket.on('chat message', (data) => {
-            const isGlobal = !currentTarget && !data.to;
-            const isPrivate = currentTarget && (data.from === currentTarget || data.to === currentTarget);
-            if (isGlobal || isPrivate) renderMsg(data);
-        });
-
-        socket.on('history', (msgs) => { 
-            messagesDiv.innerHTML = ""; 
-            msgs.forEach(renderMsg); 
-        });
-
-        socket.on('message_deleted', (id) => {
-            const el = document.getElementById('msg-' + id);
-            if(el) el.remove();
-        });
-
-        function renderMsg(data) {
-            const div = document.createElement('div');
-            div.className = 'm' + (data.from === myName ? ' self' : '');
-            div.id = 'msg-' + data.id;
-            if(data.from === myName) {
-                div.onclick = () => { if(confirm("Удалить сообщение?")) socket.emit('delete_message', data.id); };
-            }
-            div.innerHTML = '<b>' + data.from + ' • ' + data.time + '</b>' + data.text;
-            messagesDiv.appendChild(div);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        function sendFile() {
+            const file = document.getElementById('f-in').files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                socket.emit('chat message', { 
+                    to: target, 
+                    file: { name: file.name, data: reader.result, type: file.type } 
+                });
+            };
+            reader.readAsDataURL(file);
         }
 
-        socket.on('err', m => alert(m));
-        socket.on('system', m => alert(m));
+        async function startVoice() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                voiceChunks = [];
+                document.getElementById('mic-btn').classList.add('recording');
+                mediaRecorder.ondataavailable = e => voiceChunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(voiceChunks, { type: 'audio/ogg; codecs=opus' });
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        socket.emit('chat message', { to: target, file: { data: reader.result }, isVoice: true });
+                    };
+                    reader.readAsDataURL(blob);
+                    stream.getTracks().forEach(t => t.stop());
+                };
+                mediaRecorder.start();
+            } catch(e) { alert("Микрофон недоступен"); }
+        }
+
+        function stopVoice() { if(mediaRecorder) { mediaRecorder.stop(); document.getElementById('mic-btn').classList.remove('recording'); } }
+
+        socket.on('chat message', addM);
+        socket.on('history', h => h.forEach(addM));
+
+        function addM(m) {
+            const wrap = document.createElement('div');
+            wrap.className = 'm ' + (m.from === myName ? 'out' : 'in');
+            let content = \`<b>\${m.from}</b><br>\`;
+            
+            if(m.isVoice) {
+                content += \`<audio src="\${m.file.data}" controls></audio>\`;
+            } else if(m.file) {
+                if(m.file.type.startsWith('image')) content += \`<img src="\${m.file.data}" onclick="window.open(this.src)">\`;
+                else content += \`<a href="\${m.file.data}" download="\${m.file.name}" style="color:var(--accent)">📄 \${m.file.name}</a>\`;
+            }
+            
+            content += \`<div style="margin-top:5px">\${m.text}</div><span class="time">\${m.time}</span>\`;
+            wrap.innerHTML = content;
+            msgs.appendChild(wrap);
+            msgs.scrollTop = msgs.scrollHeight;
+        }
+
+        // --- ЛОГИКА ЗВОНКОВ ---
+        async function startCall() {
+            call_overlay.style.display = 'flex';
+            call_status.innerText = "Вызов " + target + "...";
+            call_ava.innerText = target[0];
+            
+            peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(t => peer.addTrack(t, stream));
+            
+            const offer = await peer.createOffer();
+            await peer.setLocalDescription(offer);
+            socket.emit('call-user', { to: target, offer });
+            
+            peer.ontrack = e => { const audio = new Audio(); audio.srcObject = e.streams[0]; audio.play(); };
+        }
+
+        socket.on('incoming-call', async d => {
+            call_overlay.style.display = 'flex';
+            call_status.innerText = "Входящий от " + d.from;
+            ans_btn.style.display = 'block';
+            ans_btn.onclick = async () => {
+                ans_btn.style.display = 'none';
+                peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(t => peer.addTrack(t, stream));
+                await peer.setRemoteDescription(new RTCSessionDescription(d.offer));
+                const answer = await peer.createAnswer();
+                await peer.setLocalDescription(answer);
+                socket.emit('answer-call', { to: d.from, answer });
+                peer.ontrack = e => { const audio = new Audio(); audio.srcObject = e.streams[0]; audio.play(); };
+            };
+        });
+
+        socket.on('call-accepted', d => peer.setRemoteDescription(new RTCSessionDescription(d.answer)));
+        function endCall() { call_overlay.style.display = 'none'; if(peer) peer.close(); location.reload(); }
+
+        socket.on('err', e => alert(e));
     </script>
 </body>
 </html>
 `;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => {
-    console.log('00 ULTRA CORE ACTIVE ON PORT ' + PORT);
-});
+http.listen(PORT, '0.0.0.0', () => console.log('00 ULTRA ELITE ACTIVE ON PORT ' + PORT));

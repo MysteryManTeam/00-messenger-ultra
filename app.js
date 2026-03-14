@@ -23,7 +23,6 @@ io.on('connection', (socket) => {
             db.users[d.user] = { pass: bcrypt.hashSync(d.pass, 10) };
             save(); socket.emit('sys', 'Готово');
         } else {
-            // Поддержка обычного пароля и сохраненного хэша для автовхода
             const isMatch = d.isAuto ? (d.pass === u?.pass) : (u && bcrypt.compareSync(d.pass, u.pass));
             if (u && isMatch) {
                 curr = d.user; socket.join(curr); online[curr] = socket.id;
@@ -35,7 +34,7 @@ io.on('connection', (socket) => {
 
     socket.on('get_h', (t) => {
         if (!curr) return;
-        const h = db.messages.filter(m => !t ? !m.to : (m.to === t && m.from === curr) || (m.to === curr && m.from === t)).slice(-80);
+        const h = db.messages.filter(m => !t ? !m.to : (m.to === t && m.from === curr) || (m.to === curr && m.from === t)).slice(-100);
         socket.emit('hist', h);
     });
 
@@ -61,53 +60,66 @@ const ui = `
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>00 Messenger Smart Auto</title>
+    <title>00 Messenger - Ultimate Stable</title>
     <style>
-        :root { --bg: #121212; --side: #1a1a1a; --acc: #00a2ff; --brd: #333; }
+        :root { --bg: #121212; --side: #1a1a1a; --acc: #00a2ff; --brd: #333; --err: #ff4d4d; }
         body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
         #sidebar { width: 280px; background: var(--side); border-right: 1px solid var(--brd); display: flex; flex-direction: column; }
-        #chat-main { flex: 1; display: flex; flex-direction: column; }
-        .hdr { padding: 15px; border-bottom: 1px solid var(--brd); display: flex; justify-content: space-between; align-items: center; background: #1a1a1a; }
+        #chat-main { flex: 1; display: flex; flex-direction: column; background: #000; }
+        .hdr { padding: 15px; border-bottom: 1px solid var(--brd); display: flex; justify-content: space-between; align-items: center; background: #1a1a1a; height: 50px; box-sizing: border-box; }
         #msgs { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
-        .m { padding: 10px; border-radius: 8px; max-width: 70%; font-size: 14px; word-break: break-word; }
-        .m.me { align-self: flex-end; background: #0056b3; }
-        .m.them { align-self: flex-start; background: #333; }
+        .m { padding: 10px; border-radius: 8px; max-width: 75%; font-size: 14px; word-break: break-word; line-height: 1.4; }
+        .m.me { align-self: flex-end; background: #0056b3; color: #fff; }
+        .m.them { align-self: flex-start; background: #262626; color: #efefef; }
         
-        .input-panel { background: var(--side); border-top: 1px solid var(--brd); padding: 10px 15px; display: flex; align-items: flex-end; gap: 10px; }
+        .input-panel { background: var(--side); border-top: 1px solid var(--brd); padding: 12px 15px; display: flex; align-items: flex-end; gap: 10px; }
         textarea { 
             flex: 1; background: #000; color: white; border: 1px solid #444; 
             padding: 10px; border-radius: 8px; resize: none; outline: none; 
-            min-height: 40px; max-height: 200px; line-height: 20px; overflow-y: hidden;
+            min-height: 40px; max-height: 250px; line-height: 20px; overflow-y: hidden;
+            font-family: inherit; font-size: 14px;
         }
-        .u-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #222; }
+        .u-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #222; transition: 0.2s; }
+        .u-item:hover { background: #222; }
         .u-item.active { border-left: 4px solid var(--acc); background: #222; }
-        button { padding: 10px 15px; border: none; border-radius: 8px; cursor: pointer; background: var(--acc); color: white; font-weight: bold; height: 40px; }
+        
+        button { padding: 10px 15px; border: none; border-radius: 8px; cursor: pointer; background: var(--acc); color: white; font-weight: bold; }
+        .btn-exit { background: transparent; color: var(--err); padding: 4px 8px; font-size: 11px; border: 1px solid var(--err); }
+        .btn-exit:hover { background: var(--err); color: white; }
+
         #call-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 10000; flex-direction: column; align-items: center; justify-content: center; }
     </style>
 </head>
 <body>
     <div id="auth" style="position:fixed; inset:0; background:var(--bg); z-index:20000; display:flex; align-items:center; justify-content:center;">
-        <div style="background:#222; padding:30px; border-radius:10px; text-align:center; width:300px; border: 1px solid #444;">
-            <h2 style="color:var(--acc)">00 Messenger</h2>
-            <input id="un" placeholder="Логин" style="width:90%; padding:8px; margin-bottom:10px;"><br>
-            <input id="pw" type="password" placeholder="Пароль" style="width:90%; padding:8px; margin-bottom:20px;"><br>
+        <div style="background:#222; padding:30px; border-radius:12px; text-align:center; width:300px; border: 1px solid #444;">
+            <h2 style="color:var(--acc); margin-top:0;">00 Messenger</h2>
+            <input id="un" placeholder="Логин" style="width:90%; padding:10px; margin-bottom:10px; border-radius:6px; border:1px solid #444; background:#000; color:#fff;"><br>
+            <input id="pw" type="password" placeholder="Пароль" style="width:90%; padding:10px; margin-bottom:20px; border-radius:6px; border:1px solid #444; background:#000; color:#fff;"><br>
             <button onclick="authReq('login')" style="width:100%">Войти</button>
-            <p onclick="authReq('reg')" style="cursor:pointer; color:#888; font-size:12px; margin-top:10px">Регистрация</p>
+            <p onclick="authReq('reg')" style="cursor:pointer; color:#888; font-size:12px; margin-top:15px">Нет аккаунта? Регистрация</p>
         </div>
     </div>
 
-    <div id="sidebar"><div class="hdr">Чаты</div><div id="u-list"></div></div>
+    <div id="sidebar">
+        <div class="hdr">
+            <b>Чаты</b>
+            <button class="btn-exit" onclick="logout()">Выход</button>
+        </div>
+        <div id="u-list"></div>
+    </div>
+
     <div id="chat-main">
-        <div class="hdr"><b id="title">Общий чат</b><button id="c-btn" style="display:none; background:#28a745; color:white" onclick="startCall()">📞</button></div>
+        <div class="hdr"><b id="title">Общий чат</b><button id="c-btn" style="display:none; background:#28a745; color:white" onclick="startCall()">📞 Звонок</button></div>
         <div id="msgs"></div>
         <div class="input-panel">
             <textarea id="mi" placeholder="Сообщение..." rows="1"></textarea>
-            <button onclick="send()">➔</button>
+            <button onclick="send()" style="height:40px; width:50px;">➔</button>
         </div>
     </div>
 
     <div id="call-overlay">
-        <h2 id="call-info">Звонок...</h2>
+        <h2 id="call-info">Входящий вызов...</h2>
         <div id="call-controls" style="display:flex; gap:20px; margin-top:20px"></div>
         <audio id="remoteAudio" autoplay></audio>
     </div>
@@ -118,7 +130,6 @@ const ui = `
         const conf = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         const mi = document.getElementById('mi');
 
-        // Автовход при загрузке
         window.onload = () => {
             const saved = localStorage.getItem('00_chat_auth');
             if (saved) {
@@ -127,11 +138,15 @@ const ui = `
             }
         };
 
-        // Авто-высота поля
+        function logout() {
+            localStorage.removeItem('00_chat_auth');
+            location.reload();
+        }
+
         mi.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
-            this.style.overflowY = this.scrollHeight > 200 ? 'auto' : 'hidden';
+            this.style.overflowY = this.scrollHeight > 250 ? 'auto' : 'hidden';
         });
 
         function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
@@ -148,7 +163,7 @@ const ui = `
         function select(u) {
             target = u;
             document.querySelectorAll('.u-item').forEach(el => el.classList.remove('active'));
-            if(event && event.currentTarget) event.currentTarget.classList.add('active');
+            if(event && event.currentTarget && event.currentTarget.classList) event.currentTarget.classList.add('active');
             title.innerText = u || "Общий чат";
             c_btn.style.display = u ? "block" : "none";
             msgs.innerHTML = '';
@@ -176,10 +191,11 @@ const ui = `
         function render(m) {
             const d = document.createElement('div');
             d.className = 'm ' + (m.from === me ? 'me' : 'them');
-            d.innerHTML = \`<small style="display:block;opacity:0.6">\${m.from}</small>\${m.text}\`;
+            d.innerHTML = \`<small style="display:block; font-size:10px; opacity:0.6; margin-bottom:2px;">\${m.from}</small>\${m.text}\`;
             msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight;
         }
 
+        // Логика звонков
         async function startCall() {
             document.getElementById('call-overlay').style.display = 'flex';
             peer = new RTCPeerConnection(conf);
@@ -217,4 +233,4 @@ const ui = `
 `;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { console.log('Messenger with Auto-Login ready'); });
+http.listen(PORT, '0.0.0.0', () => { console.log('Work'); });

@@ -23,9 +23,11 @@ io.on('connection', (socket) => {
             db.users[d.user] = { pass: bcrypt.hashSync(d.pass, 10) };
             save(); socket.emit('sys', 'Готово');
         } else {
+            // Проверка: обычный пароль или сохраненный хэш для автовхода
             const isMatch = d.isAuto ? (d.pass === u?.pass) : (u && bcrypt.compareSync(d.pass, u.pass));
             if (u && isMatch) {
                 curr = d.user; socket.join(curr); online[curr] = socket.id;
+                // Отправляем обратно имя и хэш пароля для сохранения в localStorage
                 socket.emit('auth_ok', {user: curr, pass: u.pass});
                 io.emit('upd_u', { all: Object.keys(db.users), on: Object.keys(online) });
             } else socket.emit('err', 'Ошибка входа');
@@ -83,6 +85,7 @@ const ui = `
         .btn-icon { cursor: pointer; font-size: 20px; }
         #call-box { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 9999; flex-direction: column; align-items: center; justify-content: center; }
         button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; background: var(--acc); }
+        .logout-btn { background: #ff4d4d; padding: 5px 10px; font-size: 12px; margin-left: 10px; }
     </style>
 </head>
 <body>
@@ -97,7 +100,10 @@ const ui = `
     </div>
 
     <div id="sidebar">
-        <div class="header"><b>Чаты</b></div>
+        <div class="header">
+            <b>Чаты</b>
+            <button class="logout-btn" onclick="logout()">Выход</button>
+        </div>
         <div id="u-list"></div>
     </div>
 
@@ -122,7 +128,20 @@ const ui = `
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         const mi = document.getElementById('mi');
 
-        // Авто-высота поля
+        // ЛОГИКА АВТОВХОДА
+        window.addEventListener('load', () => {
+            const saved = localStorage.getItem('messenger_auth');
+            if (saved) {
+                const data = JSON.parse(saved);
+                socket.emit('auth', { type: 'login', user: data.user, pass: data.pass, isAuto: true });
+            }
+        });
+
+        function logout() {
+            localStorage.removeItem('messenger_auth');
+            location.reload();
+        }
+
         mi.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
@@ -130,13 +149,26 @@ const ui = `
         });
 
         function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
-        socket.on('auth_ok', d => { me=d.user; auth.style.display='none'; selectChat(null); });
-        socket.on('err', t => alert(t));
+        
+        socket.on('auth_ok', d => { 
+            me = d.user; 
+            auth.style.display = 'none'; 
+            // Сохраняем данные для автовхода (имя и хэшированный пароль из БД)
+            localStorage.setItem('messenger_auth', JSON.stringify({ user: d.user, pass: d.pass }));
+            selectChat(null); 
+        });
+
+        socket.on('err', t => {
+            alert(t);
+            localStorage.removeItem('messenger_auth'); // Удаляем если данные устарели
+        });
 
         function selectChat(u) {
             target = u;
             document.querySelectorAll('.u-card').forEach(c => c.classList.remove('active'));
-            if(event && event.currentTarget) event.currentTarget.classList.add('active');
+            if(window.event && window.event.currentTarget && window.event.currentTarget.classList) {
+                window.event.currentTarget.classList.add('active');
+            }
             document.getElementById('chat-title').innerText = u || 'Общий чат';
             document.getElementById('call-btn').style.display = u ? 'block' : 'none';
             document.getElementById('messages').innerHTML = '';

@@ -714,10 +714,5 @@ const htmlContent = `
 // --- ЗАПУСК ---
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
-    console.log('');
-    console.log('==============================================');
-    console.log('🚀 00 ULTRA ELITE v3.0 успешно запущен!');
-    console.log('📍 Порт: ' + PORT);
-    console.log('🌐 Доступ открыт для всех устройств в сети.');
-    console.log('==============================================');
+    console.log('🚀 00 ULTRA ELITE запущен на порту: ' + PORT);
 });

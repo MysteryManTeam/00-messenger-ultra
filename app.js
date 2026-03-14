@@ -5,24 +5,23 @@ const io = require('socket.io')(http, { cors: { origin: "*" } });
 
 app.get('/', (req, res) => { res.send(ui); });
 
+// Храним список всех подключенных ID
+let participants = new Set();
+
 io.on('connection', (socket) => {
-    // Сразу подключаем человека к единственной комнате
-    const room = 'main_voice_room';
-    socket.join(room);
+    participants.add(socket.id);
     
-    // Оповещаем остальных
-    socket.to(room).emit('user_joined', socket.id);
+    // Сразу сообщаем новичку, кто уже в звонке
+    const others = Array.from(participants).filter(id => id !== socket.id);
+    socket.emit('all_users', others);
 
-    // Передаем список тех, кто уже в комнате
-    const clients = io.sockets.adapter.rooms.get(room);
-    const others = clients ? Array.from(clients).filter(id => id !== socket.id) : [];
-    socket.emit('room_users', others);
-
+    // Сигналинг для WebRTC
     socket.on('offer', d => io.to(d.to).emit('offer', { from: socket.id, offer: d.offer }));
     socket.on('answer', d => io.to(d.to).emit('answer', { from: socket.id, answer: d.answer }));
     socket.on('ice', d => io.to(d.to).emit('ice', { from: socket.id, cand: d.cand }));
 
     socket.on('disconnect', () => {
+        participants.delete(socket.id);
         io.emit('user_left', socket.id);
     });
 });
@@ -33,80 +32,65 @@ const ui = `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultra Voice Connect</title>
+    <title>Unlimited Voice Hub</title>
     <style>
-        body { background: #000; color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-        .circle { width: 120px; height: 120px; background: #00ff00; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 50px; box-shadow: 0 0 30px #00ff00; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.7; } 100% { transform: scale(1); opacity: 1; } }
-        #status { margin-top: 20px; color: #888; text-align: center; font-size: 14px; }
-        .user-card { border: 2px solid #333; padding: 20px; border-radius: 15px; background: #111; display: flex; flex-direction: column; align-items: center; }
+        body { background: #0b0e11; color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #header { padding: 20px; background: #15191c; text-align: center; border-bottom: 1px solid #2d3339; }
+        #grid { flex: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; padding: 20px; gap: 15px; overflow-y: auto; }
+        .user-node { width: 100px; height: 100px; background: #3d444d; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; border: 3px solid #00ff00; position: relative; }
+        .user-node::after { content: 'LIVE'; position: absolute; bottom: -10px; background: #00ff00; color: #000; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+        #controls { padding: 30px; display: flex; justify-content: center; }
+        .btn { padding: 15px 40px; font-size: 18px; font-weight: bold; cursor: pointer; border-radius: 50px; border: none; background: #00ff00; color: #000; box-shadow: 0 0 20px rgba(0,255,0,0.3); }
+        .btn:disabled { background: #2d3339; color: #888; cursor: default; box-shadow: none; }
     </style>
 </head>
 <body>
-    <div class="user-card">
-        <div class="circle" id="mic-icon">🎙</div>
-        <div id="status">Нажмите для старта</div>
-        <button id="start-btn" style="margin-top:20px; padding:10px 20px; cursor:pointer; background:#fff; border:none; border-radius:5px; font-weight:bold;">ВОЙТИ В СЕТЬ</button>
+    <div id="header">
+        <h1 style="margin:0; font-size: 18px; color: #00ff00;">ОБЩИЙ ГОЛОСОВОЙ КАНАЛ</h1>
+        <p id="stat" style="font-size: 12px; color: #888; margin: 5px 0 0;">Нажмите кнопку, чтобы вас слышали</p>
     </div>
-    <div id="remote-container"></div>
+
+    <div id="grid">
+        </div>
+
+    <div id="controls">
+        <button id="join-btn" class="btn">ПРИСОЕДИНИТЬСЯ</button>
+    </div>
+
+    <div id="audios"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
         let localStream;
         let peers = {};
-        
-        // Максимальный список STUN-серверов для пробива любого интернета
-        const config = { 
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' },
-                { urls: 'stun:global.stun.twilio.com:3478' }
-            ] 
-        };
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
 
-        const startBtn = document.getElementById('start-btn');
-        const status = document.getElementById('status');
+        const joinBtn = document.getElementById('join-btn');
+        const grid = document.getElementById('grid');
 
-        startBtn.onclick = async () => {
+        joinBtn.onclick = async () => {
             try {
-                // Захват звука с подавлением шума и эха
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
+                    audio: { echoCancellation: true, noiseSuppression: true } 
                 });
+                joinBtn.disabled = true;
+                joinBtn.innerText = "В СЕТИ";
+                document.getElementById('stat').innerText = "Вас слышат все участники";
                 
-                startBtn.style.display = 'none';
-                status.innerText = "В ЭФИРЕ - ЖДЕМ СОБЕСЕДНИКА";
-                status.style.color = "#00ff00";
-
-                socket.emit('ready'); // Сообщаем серверу, что мы готовы
+                // Запрашиваем список тех, кому нужно позвонить
+                socket.emit('ready'); 
             } catch (e) {
-                alert("Ошибка доступа к микрофону! Проверьте HTTPS и настройки.");
+                alert("Нужен доступ к микрофону!");
             }
         };
 
-        socket.on('room_users', users => {
-            users.forEach(id => initiateCall(id));
+        socket.on('all_users', users => {
+            users.forEach(id => createConnection(id, true));
         });
-
-        socket.on('user_joined', id => {
-            // Когда кто-то зашел, ждем секунду и звоним ему
-            setTimeout(() => initiateCall(id), 1000);
-        });
-
-        async function initiateCall(id) {
-            if (peers[id]) return;
-            const pc = createPC(id);
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('offer', { to: id, offer });
-        }
 
         socket.on('offer', async d => {
-            const pc = createPC(d.from);
+            const pc = createConnection(d.from, false);
             await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
             const ans = await pc.createAnswer();
             await pc.setLocalDescription(ans);
@@ -118,22 +102,27 @@ const ui = `
         });
 
         socket.on('ice', d => {
-            if (peers[d.from]) peers[d.from].addIceCandidate(new RTCIceCandidate(d.cand)).catch(e => {});
+            if (peers[d.from]) peers[d.from].addIceCandidate(new RTCIceCandidate(d.cand)).catch(()=>{});
         });
 
         socket.on('user_left', id => {
             if (peers[id]) {
                 peers[id].close();
                 delete peers[id];
+                document.getElementById('node_' + id)?.remove();
                 document.getElementById('aud_' + id)?.remove();
             }
         });
 
-        function createPC(id) {
+        function createConnection(id, isOffer) {
+            if (peers[id]) return peers[id];
+
             const pc = new RTCPeerConnection(config);
             peers[id] = pc;
 
-            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+            if (localStream) {
+                localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+            }
 
             pc.onicecandidate = e => {
                 if (e.candidate) socket.emit('ice', { to: id, cand: e.candidate });
@@ -146,23 +135,32 @@ const ui = `
                     aud.id = 'aud_' + id;
                     aud.autoplay = true;
                     aud.setAttribute('playsinline', 'true');
-                    document.body.appendChild(aud);
+                    document.getElementById('audios').appendChild(aud);
+
+                    const node = document.createElement('div');
+                    node.id = 'node_' + id;
+                    node.className = 'user-node';
+                    node.innerText = '👤';
+                    grid.appendChild(node);
                 }
                 aud.srcObject = e.streams[0];
-                status.innerText = "СОЕДИНЕНИЕ УСТАНОВЛЕНО";
             };
+
+            if (isOffer) {
+                pc.onnegotiationneeded = async () => {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    socket.emit('offer', { to: id, offer });
+                };
+            }
 
             return pc;
         }
 
-        // Авто-разблокировка звука при любом клике
-        window.onclick = () => {
+        // Фикс звука для мобилок
+        window.addEventListener('click', () => {
             document.querySelectorAll('audio').forEach(a => a.play().catch(()=>{}));
-        };
+        }, { once: false });
     </script>
 </body>
 </html>
-`;
-
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { console.log('Ultra Voice Server running'); });

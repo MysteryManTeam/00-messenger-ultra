@@ -21,20 +21,20 @@ io.on('connection', (socket) => {
         if (d.type === 'reg') {
             if (db.users[d.user]) return socket.emit('err', 'Занят');
             db.users[d.user] = { pass: bcrypt.hashSync(d.pass, 10) };
-            save(); socket.emit('sys', 'Ок, входи');
+            save(); socket.emit('sys', 'Регистрация ок');
         } else {
             const u = db.users[d.user];
             if (u && bcrypt.compareSync(d.pass, u.pass)) {
                 curr = d.user; socket.join(d.user); online[curr] = socket.id;
                 socket.emit('auth_ok', curr);
                 io.emit('upd_u', { all: Object.keys(db.users), on: Object.keys(online) });
-            } else socket.emit('err', 'Ошибка');
+            } else socket.emit('err', 'Ошибка входа');
         }
     });
 
     socket.on('get_h', (t) => {
         if (!curr) return;
-        const h = db.messages.filter(m => (!t && !m.to) || (m.to===t && m.from===curr) || (m.to===curr && m.from===t)).slice(-100);
+        const h = db.messages.filter(m => (!t && !m.to) || (m.to===t && m.from===curr) || (m.to===curr && m.from===t)).slice(-50);
         socket.emit('hist', h);
     });
 
@@ -42,7 +42,7 @@ io.on('connection', (socket) => {
         if (!curr) return;
         const m = { id: 'id'+Date.now(), from: curr, to: d.to || null, text: d.text || "", file: d.file || null, isVoice: d.isVoice || false };
         db.messages.push(m); save();
-        if (!d.to) io.emit('msg', m); else io.to(d.to).to(curr).emit('msg', m);
+        if (!d.to) io.emit('msg', m); else { io.to(d.to).emit('msg', m); socket.emit('msg', m); }
     });
 
     socket.on('del', (id) => {
@@ -50,9 +50,9 @@ io.on('connection', (socket) => {
         if (i !== -1) { db.messages.splice(i, 1); save(); io.emit('del_ok', id); }
     });
 
-    socket.on('call', (d) => io.to(d.to).emit('in_call', { from: curr, offer: d.offer }));
-    socket.on('ans', (d) => io.to(d.to).emit('call_ok', { ans: d.ans }));
-    socket.on('ice', (d) => io.to(d.to).emit('ice', { cand: d.cand }));
+    socket.on('call', d => io.to(d.to).emit('in_call', { from: curr, offer: d.offer }));
+    socket.on('ans', d => io.to(d.to).emit('call_ok', { ans: d.ans }));
+    socket.on('ice', d => io.to(d.to).emit('ice', { cand: d.cand }));
 
     socket.on('disconnect', () => { if(curr){ delete online[curr]; io.emit('upd_u', { all: Object.keys(db.users), on: Object.keys(online) }); } });
 });
@@ -66,19 +66,19 @@ const ui = `
     <style>
         :root { --bg: #0b0e14; --side: #171c26; --acc: #00aff0; }
         body { background: var(--bg); color: #fff; font-family: sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
-        #sidebar { width: 300px; background: var(--side); border-right: 1px solid #222; display: flex; flex-direction: column; }
+        #sidebar { width: 300px; background: var(--side); border-right: 1px solid #222; display: flex; flex-direction: column; flex-shrink: 0; }
         #chat { flex: 1; display: flex; flex-direction: column; background: #000; position: relative; }
         @media (max-width: 800px) {
-            #sidebar { width: 100%; position: absolute; z-index: 10; }
-            #chat { width: 100%; position: absolute; transform: translateX(100%); transition: 0.3s; z-index: 20; }
+            #sidebar { width: 100%; position: absolute; height: 100%; z-index: 10; }
+            #chat { width: 100%; position: absolute; height: 100%; transform: translateX(100%); transition: 0.3s; z-index: 20; }
             body.open #chat { transform: translateX(0); }
         }
         .hdr { padding: 15px; background: var(--side); border-bottom: 1px solid #222; display: flex; align-items: center; gap: 10px; }
         #msgs { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .m { background: #222b3a; padding: 10px; border-radius: 12px; max-width: 80%; align-self: flex-start; position: relative; }
+        .m { background: #222b3a; padding: 10px; border-radius: 12px; max-width: 80%; align-self: flex-start; position: relative; word-break: break-word; }
         .m.me { align-self: flex-end; background: #005c84; }
         .in-box { padding: 15px; background: var(--side); display: flex; gap: 10px; align-items: center; }
-        input { flex: 1; background: #000; color: #fff; border: 1px solid #333; padding: 10px; border-radius: 10px; }
+        input { flex: 1; background: #000; color: #fff; border: 1px solid #333; padding: 10px; border-radius: 10px; outline: none; }
         .btn { cursor: pointer; font-size: 20px; }
         .rec { color: red; animation: b 1s infinite; } @keyframes b { 50% { opacity: 0.5; } }
     </style>
@@ -87,9 +87,10 @@ const ui = `
     <div id="auth" style="position:fixed; inset:0; background:var(--bg); z-index:100; display:flex; align-items:center; justify-content:center;">
         <div style="background:var(--side); padding:30px; border-radius:15px; text-align:center;">
             <h2 style="color:var(--acc)">00 ULTRA</h2>
-            <input id="u" placeholder="Логин"><input id="p" type="password" placeholder="Пароль">
-            <button onclick="socket.emit('auth', {type:'login', user:u.value, pass:p.value})" style="width:100%; padding:10px; margin-top:10px;">ВХОД</button>
-            <p onclick="socket.emit('auth', {type:'reg', user:u.value, pass:p.value})" style="font-size:12px; cursor:pointer;">Регистрация</p>
+            <input id="un" placeholder="Логин"><br>
+            <input id="pw" type="password" placeholder="Пароль"><br>
+            <button onclick="authReq('login')" style="width:100%; padding:10px; margin-top:10px;">ВХОД</button>
+            <p onclick="authReq('reg')" style="font-size:12px; cursor:pointer; color:#888;">Создать аккаунт</p>
         </div>
     </div>
     <div id="sidebar">
@@ -97,7 +98,7 @@ const ui = `
         <div id="u-list"></div>
     </div>
     <div id="chat">
-        <div class="hdr"><span onclick="document.body.classList.remove('open')">←</span> <b id="target-n">Чат</b> <span id="call-btn" style="display:none; margin-left:auto" onclick="startCall()">📞</span></div>
+        <div class="hdr"><span onclick="document.body.classList.remove('open')">←</span> <b id="t-n">Общий чат</b> <span id="c-btn" style="display:none; margin-left:auto" onclick="startCall()">📞</span></div>
         <div id="msgs"></div>
         <div style="padding:5px; background:var(--side)"><input type="range" min="0" max="300" value="0" oninput="document.querySelector('.in-box').style.marginBottom=this.value+'px'"></div>
         <div class="in-box">
@@ -108,32 +109,33 @@ const ui = `
         </div>
     </div>
     <div id="c-ui" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:200; flex-direction:column; align-items:center; justify-content:center;">
-        <h2 id="cs">Звонок...</h2>
-        <button id="ab" style="background:green; color:#fff; padding:20px; border-radius:50%; display:none;">📞</button>
-        <button onclick="location.reload()" style="background:red; color:#fff; padding:20px; border-radius:50%; margin-top:20px;">📵</button>
+        <h2 id="cs">Вызов...</h2>
+        <button id="ab" style="background:green; color:#fff; padding:20px; border-radius:50%; display:none; border:none; font-size:24px;">📞</button>
+        <button onclick="location.reload()" style="background:red; color:#fff; padding:20px; border-radius:50%; margin-top:20px; border:none; font-size:24px;">📵</button>
     </div>
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io(); let me='', target=null, peer, rec, ch=[], isR=false;
         const conf = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        function authReq(t) { socket.emit('auth', {type:t, user:un.value, pass:pw.value}); }
         socket.on('auth_ok', n => { me=n; auth.style.display='none'; });
         socket.on('err', t => alert(t)); socket.on('sys', t => alert(t));
-        function set(u) { target=u; document.body.classList.add('open'); target_n.innerText=u||'Общий'; call_btn.style.display=u?'block':'none'; msgs.innerHTML=''; socket.emit('get_h', u); }
+        function set(u) { target=u; document.body.classList.add('open'); t_n.innerText=u||'Общий'; c_btn.style.display=u?'block':'none'; msgs.innerHTML=''; socket.emit('get_h', u); }
         socket.on('upd_u', d => {
-            u_list.innerHTML = '<div onclick="set(null)" style="padding:15px; cursor:pointer">🌍 Общий чат</div>';
-            d.all.forEach(u => { if(u!==me) { let v=document.createElement('div'); v.style.padding='15px'; v.innerHTML=u+(d.on.includes(u)?' 🟢':''); v.onclick=()=>set(u); u_list.appendChild(v); } });
+            u_list.innerHTML = '<div onclick="set(null)" style="padding:15px; cursor:pointer; border-bottom:1px solid #222;">🌍 Общий чат</div>';
+            d.all.forEach(u => { if(u!==me) { let v=document.createElement('div'); v.style.cssText='padding:15px; cursor:pointer; border-bottom:1px solid #222;'; v.innerHTML=u+(d.on.includes(u)?' 🟢':''); v.onclick=()=>set(u); u_list.appendChild(v); } });
         });
         function send() { if(mi.value) { socket.emit('msg', {text:mi.value, to:target}); mi.value=''; } }
         function up(el) { const f=el.files[0]; const r=new FileReader(); r.onload=()=>socket.emit('msg', {to:target, file:{name:f.name, data:r.result, type:f.type}}); r.readAsDataURL(f); }
-        socket.on('msg', m => { if((!target && !m.to) || (target && (m.from===target || m.to===target))) add(m); });
+        socket.on('msg', m => { if((!target && !m.to) || (target && (m.from===target || m.to===target || m.from===me))) add(m); });
         socket.on('hist', h => h.forEach(add));
         socket.on('del_ok', id => document.getElementById(id)?.remove());
         function add(m) {
             const v=document.createElement('div'); v.className='m '+(m.from===me?'me':''); v.id=m.id;
-            let c = '<small>'+m.from+'</small><br>';
-            if(m.from===me) c+='<span onclick="socket.emit(\\'del\\',\\''+m.id+'\\')" style="position:absolute;top:0;right:5px;cursor:pointer">×</span>';
-            if(m.isVoice) c+='<audio src="'+m.file.data+'" controls></audio>';
-            else if(m.file) { if(m.file.type.startsWith('image')) c+='<img src="'+m.file.data+'" style="max-width:100%">'; else c+='<a href="'+m.file.data+'" download style="color:#fff">📄 '+m.file.name+'</a>'; }
+            let c = '<small style="opacity:0.5">'+m.from+'</small><br>';
+            if(m.from===me) c+='<span onclick="socket.emit(\\'del\\',\\''+m.id+'\\')" style="position:absolute;top:2px;right:5px;cursor:pointer;font-size:10px;">×</span>';
+            if(m.isVoice) c+='<audio src="'+m.file.data+'" controls style="width:200px"></audio>';
+            else if(m.file) { if(m.file.type.startsWith('image')) c+='<img src="'+m.file.data+'" style="max-width:200px;border-radius:8px;">'; else c+='<a href="'+m.file.data+'" download style="color:var(--acc)">📄 '+m.file.name+'</a>'; }
             if(m.text) c+='<div>'+m.text+'</div>'; v.innerHTML=c; msgs.appendChild(v); msgs.scrollTop=msgs.scrollHeight;
         }
         async function tRec() {
@@ -153,7 +155,7 @@ const ui = `
             peer.ontrack=e=>{ const a=new Audio(); a.srcObject=e.streams[0]; a.play(); };
         }
         socket.on('in_call', async d => {
-            c_ui.style.display='flex'; cs.innerText='Вызов: '+d.from; ab.style.display='block';
+            c_ui.style.display='flex'; cs.innerText='Входящий от '+d.from; ab.style.display='block';
             ab.onclick=async()=>{
                 ab.style.display='none'; peer=new RTCPeerConnection(conf);
                 const s=await navigator.mediaDevices.getUserMedia({audio:true}); s.getTracks().forEach(t=>peer.addTrack(t,s));
@@ -171,4 +173,4 @@ const ui = `
 `;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => { console.log('Online on ' + PORT); });
+http.listen(PORT, '0.0.0.0', () => { console.log('Server running'); });

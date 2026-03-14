@@ -17,7 +17,7 @@ io.on('connection', (socket) => {
         myRoom = roomName;
         socket.join(myRoom);
         
-        // Оповещаем всех, что мы зашли
+        // Оповещаем комнату о входе
         socket.to(myRoom).emit('user_joined', myId);
 
         const clients = io.sockets.adapter.rooms.get(myRoom);
@@ -39,28 +39,30 @@ const ui = `
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Chat Final</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Voice Chat Pro</title>
     <style>
         body { background: #1e1f22; color: #dbdee1; font-family: sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
-        #sidebar { width: 240px; background: #2b2d31; padding: 20px; border-right: 1px solid #1e1f22; }
+        #sidebar { width: 200px; background: #2b2d31; padding: 15px; border-right: 1px solid #1e1f22; flex-shrink: 0; }
         #content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #313338; }
-        .room-btn { padding: 12px; background: #35373c; border-radius: 5px; cursor: pointer; border: none; color: #b5bac1; text-align: left; width: 100%; margin-bottom: 5px; }
-        .room-btn.active { background: #505259; color: white; font-weight: bold; }
-        .user-blob { width: 100px; height: 100px; background: #5865f2; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin: 15px; box-shadow: 0 0 20px rgba(88,101,242,0.4); }
-        #status { font-size: 18px; color: #80848e; margin-bottom: 20px; }
+        .room-btn { padding: 12px; background: #35373c; border-radius: 5px; cursor: pointer; border: none; color: #b5bac1; text-align: left; width: 100%; margin-bottom: 8px; font-size: 14px; }
+        .room-btn.active { background: #5865f2; color: white; }
+        .user-blob { width: 90px; height: 90px; background: #23a559; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin: 10px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(35, 165, 89, 0.4); } 70% { box-shadow: 0 0 0 15px rgba(35, 165, 89, 0); } 100% { box-shadow: 0 0 0 0 rgba(35, 165, 89, 0); } }
+        #status { font-size: 14px; color: #80848e; position: absolute; top: 10px; }
+        #remote-audios { display: none; }
     </style>
 </head>
 <body>
     <div id="sidebar">
-        <h2 style="color:white; font-size:16px;">Каналы</h2>
-        <button class="room-btn" onclick="joinRoom('Комната 1', this)">🔊 Комната 1</button>
-        <button class="room-btn" onclick="joinRoom('Комната 2', this)">🔊 Комната 2</button>
-        <button class="room-btn" onclick="joinRoom('Комната 3', this)">🔊 Комната 3</button>
+        <h2 style="color:white; font-size:14px; margin-bottom:15px;">КАНАЛЫ</h2>
+        <button class="room-btn" onclick="joinRoom('Room 1', this)">🔊 Комната 1</button>
+        <button class="room-btn" onclick="joinRoom('Room 2', this)">🔊 Комната 2</button>
+        <button class="room-btn" onclick="joinRoom('Room 3', this)">🔊 Комната 3</button>
     </div>
     <div id="content">
-        <div id="status">Нажмите на комнату</div>
-        <div id="user-list" style="display:flex;"></div>
+        <div id="status">Ожидание выбора комнаты...</div>
+        <div id="user-list" style="display:flex; flex-wrap:wrap; justify-content:center;"></div>
         <div id="remote-audios"></div>
     </div>
 
@@ -69,31 +71,47 @@ const ui = `
         const socket = io();
         let localStream;
         let peers = {};
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+        const config = { 
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+            ],
+            iceCandidatePoolSize: 10
+        };
 
         async function joinRoom(name, btn) {
             try {
-                if (!localStream) localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                log("Запрос доступа к микрофону...");
+                if (!localStream) {
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
                 
                 document.querySelectorAll('.room-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                document.getElementById('status').innerText = "Вы в: " + name;
+                log("Вы вошли в: " + name);
                 
-                // Сброс
                 Object.values(peers).forEach(p => p.close());
                 peers = {};
                 document.getElementById('remote-audios').innerHTML = '';
                 document.getElementById('user-list').innerHTML = '';
 
                 socket.emit('join', name);
-            } catch(e) { alert("Включите микрофон!"); }
+            } catch(e) { 
+                log("ОШИБКА: Нет доступа к микрофону");
+                alert("Разрешите микрофон в настройках браузера!"); 
+            }
         }
 
-        // Если мы зашли и там кто-то есть - звоним им
-        socket.on('room_users', users => users.forEach(id => callUser(id)));
-        
-        // Если кто-то зашел к нам - он сам позвонит, но мы подготовимся
-        socket.on('user_joined', id => console.log("Кто-то зашел..."));
+        function log(msg) { document.getElementById('status').innerText = msg; }
+
+        socket.on('room_users', users => {
+            log("В комнате человек: " + users.length);
+            // Небольшая задержка перед звонком для стабильности
+            setTimeout(() => {
+                users.forEach(id => callUser(id));
+            }, 1000);
+        });
 
         async function callUser(id) {
             const pc = createPC(id);
@@ -110,8 +128,13 @@ const ui = `
             socket.emit('answer', { to: d.from, answer: ans });
         });
 
-        socket.on('answer', d => peers[d.from] && peers[d.from].setRemoteDescription(new RTCSessionDescription(d.answer)));
-        socket.on('ice', d => peers[d.from] && peers[d.from].addIceCandidate(new RTCIceCandidate(d.cand)));
+        socket.on('answer', d => {
+            if(peers[d.from]) peers[d.from].setRemoteDescription(new RTCSessionDescription(d.answer));
+        });
+
+        socket.on('ice', d => {
+            if(peers[d.from]) peers[d.from].addIceCandidate(new RTCIceCandidate(d.cand)).catch(e => {});
+        });
 
         socket.on('user_left', id => {
             if (peers[id]) {
@@ -122,32 +145,39 @@ const ui = `
         });
 
         function createPC(id) {
-            if(peers[id]) peers[id].close();
             const pc = new RTCPeerConnection(config);
             peers[id] = pc;
 
             localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
-            pc.onicecandidate = e => e.candidate && socket.emit('ice', { to: id, cand: e.candidate });
+            pc.onicecandidate = e => {
+                if (e.candidate) socket.emit('ice', { to: id, cand: e.candidate });
+            };
             
             pc.ontrack = e => {
+                log("Соединение установлено!");
                 let aud = document.getElementById('aud_' + id);
                 if (!aud) {
                     aud = document.createElement('audio');
-                    aud.id = 'aud_' + id; aud.autoplay = true; aud.setAttribute('playsinline', 'true');
+                    aud.id = 'aud_' + id;
+                    aud.autoplay = true;
+                    aud.setAttribute('playsinline', 'true');
                     document.getElementById('remote-audios').appendChild(aud);
                     
                     const blob = document.createElement('div');
-                    blob.id = 'blob_' + id; blob.className = 'user-blob'; blob.innerText = '👤';
+                    blob.id = 'blob_' + id;
+                    blob.className = 'user-blob';
+                    blob.innerText = '👤';
                     document.getElementById('user-list').appendChild(blob);
                 }
                 aud.srcObject = e.streams[0];
             };
+
             return pc;
         }
 
-        // Клик для активации звука
-        document.body.onclick = () => {
+        // Клик для фикса звука в Chrome/Safari
+        window.onclick = () => {
             document.querySelectorAll('audio').forEach(a => a.play().catch(()=>{}));
         };
     </script>

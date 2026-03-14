@@ -68,12 +68,12 @@ const htmlContent = `
     <title>00 Ultra</title>
     <style>
         :root { --bg: #0b0e14; --side: #171c26; --accent: #00aff0; --msg-in: #222b3a; --msg-out: #005c84; --text: #f5f5f5; }
-        * { box-sizing: border-box; }
-        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
-        #sidebar { width: 350px; background: var(--side); display: flex; flex-direction: column; border-right: 1px solid #222; flex-shrink: 0; transition: 0.3s; }
+        * { box-sizing: border-box; font-family: sans-serif; }
+        body { background: var(--bg); color: var(--text); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        #sidebar { width: 350px; background: var(--side); display: flex; flex-direction: column; border-right: 1px solid #222; flex-shrink: 0; }
         #chat { flex: 1; display: flex; flex-direction: column; background: #000; position: relative; }
         @media (max-width: 900px) {
-            #sidebar { width: 100%; position: absolute; height: 100%; z-index: 10; }
+            #sidebar { width: 100%; position: absolute; height: 100%; z-index: 10; transition: 0.3s; }
             #chat { width: 100%; position: absolute; height: 100%; transform: translateX(100%); transition: 0.3s; }
             body.chat-open #sidebar { transform: translateX(-20%); opacity: 0.5; }
             body.chat-open #chat { transform: translateX(0); z-index: 20; }
@@ -83,6 +83,8 @@ const htmlContent = `
         #input-area { padding: 15px; background: var(--side); display: flex; gap: 10px; align-items: center; transition: margin-bottom 0.2s; }
         #msg-in { flex: 1; background: #080a0f; border: 1px solid #333; color: #fff; padding: 12px; border-radius: 20px; outline: none; }
         .act-btn { font-size: 24px; cursor: pointer; user-select: none; }
+        .act-btn.recording { color: #ff3b30; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
         .m { max-width: 80%; padding: 10px; border-radius: 15px; position: relative; font-size: 15px; word-wrap: break-word; }
         .m.in { align-self: flex-start; background: var(--msg-in); }
         .m.out { align-self: flex-end; background: var(--msg-out); }
@@ -123,7 +125,7 @@ const htmlContent = `
         <div id="input-area">
             <label class="act-btn">📎<input type="file" id="f-in" style="display:none" onchange="upFile()"></label>
             <input type="text" id="msg-in" placeholder="Сообщение...">
-            <div class="act-btn" onmousedown="startRec()" onmouseup="stopRec()" ontouchstart="startRec()" ontouchend="stopRec()">🎤</div>
+            <div id="rec-btn" class="act-btn" onclick="toggleRec()">🎤</div>
             <div class="act-btn" onclick="send()">➤</div>
         </div>
     </div>
@@ -140,8 +142,11 @@ const htmlContent = `
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let me="", target=null, peer, recorder, chunks=[];
+        let me="", target=null, peer, recorder, chunks=[], isRecording = false;
         const ice = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+
+        // Запрос уведомлений
+        if ("Notification" in window) Notification.requestPermission();
 
         function auth(t) { socket.emit(t, { user: user.value, pass: pass.value }); }
         socket.on('login_success', d => { me=d.user; localStorage.setItem('00_u', d.user); localStorage.setItem('00_p', d.pass); document.getElementById('auth').style.display='none'; });
@@ -156,7 +161,12 @@ const htmlContent = `
         function send() { if(msg_in.value.trim()) { socket.emit('chat message', { text: msg_in.value, to: target }); msg_in.value=''; } }
         function upFile() { const f=f_in.files[0]; const r=new FileReader(); r.onload=()=>socket.emit('chat message', { to: target, file: { name: f.name, data: r.result, type: f.type } }); r.readAsDataURL(f); }
 
-        socket.on('chat message', m => { if((!target && !m.to) || (target && (m.from===target || m.to===target))) addM(m); });
+        socket.on('chat message', m => { 
+            if((!target && !m.to) || (target && (m.from===target || m.to===target))) addM(m); 
+            if(m.from !== me && document.hidden) {
+                new Notification("00 Ultra: " + m.from, { body: m.text || "Файл или ГС" });
+            }
+        });
         socket.on('history', h => h.forEach(addM));
         socket.on('msg_deleted', id => document.getElementById(id)?.remove());
 
@@ -169,6 +179,27 @@ const htmlContent = `
             c+=\`<div>\${m.text}</div>\`; d.innerHTML=c; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight;
         }
 
+        // --- ЛОГИКА ГС (НАЖАТЬ-НАЖАТЬ) ---
+        async function toggleRec() {
+            if(!isRecording) {
+                const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+                recorder = new MediaRecorder(s); chunks = [];
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = () => {
+                    const b = new Blob(chunks, { type: 'audio/ogg' });
+                    const r = new FileReader();
+                    r.onload = () => socket.emit('chat message', { to: target, file: { data: r.result }, isVoice: true });
+                    r.readAsDataURL(b);
+                };
+                recorder.start(); isRecording = true;
+                document.getElementById('rec-btn').classList.add('recording');
+            } else {
+                recorder.stop(); isRecording = false;
+                document.getElementById('rec-btn').classList.remove('recording');
+            }
+        }
+
+        // --- ЗВОНКИ ---
         async function makeCall() {
             call_ui.style.display='flex';
             peer = new RTCPeerConnection(ice);
@@ -212,13 +243,10 @@ const htmlContent = `
                 if(call_ui.style.display === 'flex') requestAnimationFrame(draw);
             } draw();
         }
-
-        async function startRec() { chunks=[]; const s=await navigator.mediaDevices.getUserMedia({audio:true}); recorder=new MediaRecorder(s); recorder.ondataavailable=e=>chunks.push(e.data); recorder.onstop=()=>{ const b=new Blob(chunks,{type:'audio/ogg'}); const r=new FileReader(); r.onload=()=>socket.emit('chat message',{to:target,file:{data:r.result},isVoice:true}); r.readAsDataURL(b); }; recorder.start(); }
-        function stopRec() { if(recorder) recorder.stop(); }
     </script>
 </body>
 </html>
 \`;
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => console.log('🚀 00 ULTRA запущен на ' + PORT));
+http.listen(PORT, '0.0.0.0', () => console.log('🚀 00 ULTRA ONLINE ON ' + PORT));

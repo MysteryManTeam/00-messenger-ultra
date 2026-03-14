@@ -5,23 +5,27 @@ const io = require('socket.io')(http, { cors: { origin: "*" } });
 
 app.get('/', (req, res) => { res.send(ui); });
 
-// Храним список всех подключенных ID
-let participants = new Set();
+let users = new Set();
 
 io.on('connection', (socket) => {
-    participants.add(socket.id);
-    
-    // Сразу сообщаем новичку, кто уже в звонке
-    const others = Array.from(participants).filter(id => id !== socket.id);
-    socket.emit('all_users', others);
+    // Лимит 4 человека
+    if (users.size >= 4) {
+        socket.emit('full');
+        return;
+    }
 
-    // Сигналинг для WebRTC
+    users.add(socket.id);
+
+    // Новичок получает ID всех, кто уже в звонке
+    const others = Array.from(users).filter(id => id !== socket.id);
+    socket.emit('init_list', others);
+
     socket.on('offer', d => io.to(d.to).emit('offer', { from: socket.id, offer: d.offer }));
     socket.on('answer', d => io.to(d.to).emit('answer', { from: socket.id, answer: d.answer }));
     socket.on('ice', d => io.to(d.to).emit('ice', { from: socket.id, cand: d.cand }));
 
     socket.on('disconnect', () => {
-        participants.delete(socket.id);
+        users.delete(socket.id);
         io.emit('user_left', socket.id);
     });
 });
@@ -32,29 +36,27 @@ const ui = `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unlimited Voice Hub</title>
+    <title>Voice Chat 4</title>
     <style>
-        body { background: #0b0e11; color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        #header { padding: 20px; background: #15191c; text-align: center; border-bottom: 1px solid #2d3339; }
-        #grid { flex: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; padding: 20px; gap: 15px; overflow-y: auto; }
-        .user-node { width: 100px; height: 100px; background: #3d444d; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; border: 3px solid #00ff00; position: relative; }
-        .user-node::after { content: 'LIVE'; position: absolute; bottom: -10px; background: #00ff00; color: #000; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
-        #controls { padding: 30px; display: flex; justify-content: center; }
-        .btn { padding: 15px 40px; font-size: 18px; font-weight: bold; cursor: pointer; border-radius: 50px; border: none; background: #00ff00; color: #000; box-shadow: 0 0 20px rgba(0,255,0,0.3); }
-        .btn:disabled { background: #2d3339; color: #888; cursor: default; box-shadow: none; }
+        body { background: #0f1012; color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+        #grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 20px; width: 100%; max-width: 400px; }
+        .user-box { aspect-ratio: 1; background: #1c1e22; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 2px solid #2d3139; transition: 0.3s; }
+        .user-box.active { border-color: #23a559; box-shadow: 0 0 15px rgba(35,165,89,0.3); }
+        .avatar { font-size: 40px; margin-bottom: 10px; }
+        .label { font-size: 12px; color: #888; }
+        #btn-main { padding: 15px 40px; font-size: 18px; border-radius: 30px; border: none; background: #5865f2; color: #fff; cursor: pointer; font-weight: bold; }
+        #btn-main:disabled { background: #35373c; }
     </style>
 </head>
 <body>
-    <div id="header">
-        <h1 style="margin:0; font-size: 18px; color: #00ff00;">ОБЩИЙ ГОЛОСОВОЙ КАНАЛ</h1>
-        <p id="stat" style="font-size: 12px; color: #888; margin: 5px 0 0;">Нажмите кнопку, чтобы вас слышали</p>
+    <div id="status" style="margin-bottom: 20px; color: #888;">Свободных мест: <span id="slots">4</span></div>
+    
+    <div id="grid">
+        <div class="user-box" id="me-box"><div class="avatar">👤</div><div class="label">Вы</div></div>
     </div>
 
-    <div id="grid">
-        </div>
-
-    <div id="controls">
-        <button id="join-btn" class="btn">ПРИСОЕДИНИТЬСЯ</button>
+    <div style="margin-top: 30px;">
+        <button id="btn-main">ПОДКЛЮЧИТЬСЯ</button>
     </div>
 
     <div id="audios"></div>
@@ -64,33 +66,31 @@ const ui = `
         const socket = io();
         let localStream;
         let peers = {};
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
+        const config = { iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+        ]};
 
-        const joinBtn = document.getElementById('join-btn');
+        const btn = document.getElementById('btn-main');
         const grid = document.getElementById('grid');
 
-        joinBtn.onclick = async () => {
+        btn.onclick = async () => {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true } 
-                });
-                joinBtn.disabled = true;
-                joinBtn.innerText = "В СЕТИ";
-                document.getElementById('stat').innerText = "Вас слышат все участники";
-                
-                // Запрашиваем список тех, кому нужно позвонить
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+                btn.disabled = true;
+                btn.innerText = "В СЕТИ";
+                document.getElementById('me-box').classList.add('active');
                 socket.emit('ready'); 
-            } catch (e) {
-                alert("Нужен доступ к микрофону!");
-            }
+            } catch (e) { alert("Разрешите микрофон!"); }
         };
 
-        socket.on('all_users', users => {
-            users.forEach(id => createConnection(id, true));
+        socket.on('init_list', users => {
+            document.getElementById('slots').innerText = 4 - (users.length + 1);
+            users.forEach(id => connectTo(id, true));
         });
 
         socket.on('offer', async d => {
-            const pc = createConnection(d.from, false);
+            const pc = connectTo(d.from, false);
             await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
             const ans = await pc.createAnswer();
             await pc.setLocalDescription(ans);
@@ -111,10 +111,13 @@ const ui = `
                 delete peers[id];
                 document.getElementById('node_' + id)?.remove();
                 document.getElementById('aud_' + id)?.remove();
+                document.getElementById('slots').innerText = parseInt(document.getElementById('slots').innerText) + 1;
             }
         });
 
-        function createConnection(id, isOffer) {
+        socket.on('full', () => { alert("Комната заполнена!"); location.reload(); });
+
+        function connectTo(id, isOffer) {
             if (peers[id]) return peers[id];
 
             const pc = new RTCPeerConnection(config);
@@ -132,16 +135,14 @@ const ui = `
                 let aud = document.getElementById('aud_' + id);
                 if (!aud) {
                     aud = document.createElement('audio');
-                    aud.id = 'aud_' + id;
-                    aud.autoplay = true;
-                    aud.setAttribute('playsinline', 'true');
+                    aud.id = 'aud_' + id; aud.autoplay = true; aud.setAttribute('playsinline', 'true');
                     document.getElementById('audios').appendChild(aud);
 
-                    const node = document.createElement('div');
-                    node.id = 'node_' + id;
-                    node.className = 'user-node';
-                    node.innerText = '👤';
-                    grid.appendChild(node);
+                    const box = document.createElement('div');
+                    box.id = 'node_' + id;
+                    box.className = 'user-box active';
+                    box.innerHTML = '<div class=\"avatar\">🎙</div><div class=\"label\">Собеседник</div>';
+                    grid.appendChild(box);
                 }
                 aud.srcObject = e.streams[0];
             };
@@ -157,10 +158,9 @@ const ui = `
             return pc;
         }
 
-        // Фикс звука для мобилок
-        window.addEventListener('click', () => {
+        window.onclick = () => {
             document.querySelectorAll('audio').forEach(a => a.play().catch(()=>{}));
-        }, { once: false });
+        };
     </script>
 </body>
 </html>
